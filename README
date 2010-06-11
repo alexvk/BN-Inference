@@ -1,0 +1,83 @@
+README
+
+This directory contains ANSI C source code for performing exact
+probabilistic inference on multiply-connected Bayesian belief
+networks using the modified join tree algorithm (to be published).
+Some code has been borrowed from Adam Galper's implementation of
+the Lauritzen-Spiegelhalter algorithm.
+
+Currently five programs are provided:
+
+	1.   infer <ergo_network_file> [<# procs>]
+
+		A command line interface for performing basic functions,
+		(computing marginal distributions for uninstantiated
+		nodes, computing the probability of observed
+		evidence, etc.) on belief networks. Takes a network
+		file in ergo format.
+
+	2.   econvert < <netview_network_file> > <ergo_network_file>
+
+		A filter that converts netview network files to
+		ergo network files. Currently, there are only two
+		supported formats.
+
+	3.   process < <netview_case_file>
+
+		Process case files in netview format.  The file includes
+		commands in ascii to perform inference given evidence.
+
+	4.   decompose <ergo_network_file> <max_parents> <ergo_network_file>
+
+		Decompose noisy-OR in a la-Heckerman fashion.  Needs to be
+		optimized further to show useful results.
+
+	5.   sample <network> <numberCases>
+
+		A program that generates a database of cases from the
+		specified network. Current output format includes data
+		useful for a belief-network learning algorithm like
+		K2.
+
+Source code for these programs is provided to demonstrate
+calls to the network inference and management routines. Use as
+you wish FOR RESEARCH PURPOSES ONLY; if you add substantive
+functionality or fix bugs, please let me know
+(alexvk@cs.stanford.edu).  Likewise, if you have any
+suggestions on style, let me know.
+
+Notice that the core inference functionality resides in the
+libinfer.a library, created with "make libinfer". By linking
+this library into your executable, you'll have access to the
+full range of routines.  Examples of routine calls can be
+found in file process.l or infer.c. Check out the Makefile for
+more details; note that Makefile is used to generate makefile.
+
+Part of this code and of this file has been extracted from Adam
+Galper's (galper@camis.stanford.edu) original code for the
+Lauritzen-Spiegelhalter algorithm implementation.  The code is
+optimized for multiprocessor as well as uniprocessor execution by
+enchancing data locality and removing redundant computations.  It
+runs hundred times faster then the old code for some networks and
+requires substantially less memory.
+
+For the multiprocessor execution you need to have ANL macros for
+your machine and set environment variables:
+
+MACROM4F -- the m4 ANL macros file
+MACROLIB -- the object library file for multiprocessor execution
+
+For the uniprocesor execution you do not need comppar.* files.
+Remove any instance of it from the Makefile and run make as
+usual.
+
+To start, type:
+
+% make -f Makefile.in depend; make infer; infer Asia
+
+I hope the menu is self-explainable.  Please let me know if you have
+any questions.
+
+Alexander V. Kozlov
+alexvk@cs.stanford.edu
+February 9, 1996

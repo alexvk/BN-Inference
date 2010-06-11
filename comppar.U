@@ -1,0 +1,1557 @@
+/********************************************************************
+$RCSfile: comppar.U,v $
+$Author: alexvk $
+$Revision: 1.1 $
+$Date: 1997/10/15 02:54:41 $
+********************************************************************/
+static char rcsid[] = "$Id: comppar.U,v 1.1 1997/10/15 02:54:41 alexvk Exp alexvk $";
+
+/*
+ * File: comppar.U (or comppar.c after m4)
+ * ---------------------------------------
+ * Package for parallel execution of probabilistic inference.
+ */
+
+#ifdef MULTIPROC
+
+/* include files for variable declarations */
+MAIN_ENV
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <assert.h>
+#include "network.h"
+#include "cluster.h"
+#include "utils.h"
+#include "set.h"
+
+#ifdef ASSIGN
+#ifdef DASH
+#define ANL_proc_asgn(x)        (4 * ANL_num_clusters - 1 - (x))
+#else
+#define ANL_proc_asgn(x)        (15 - (x))
+#endif /* DASH */
+#endif /* ASSIGN */
+
+#ifdef PERF
+#define ANL_num_procs           (4 * ANL_num_clusters)
+#define perf_clus_enbl		(~(~0x0 << ANL_num_clusters))
+#endif /* PERF */
+
+#define MAXPROCS	32
+#define MAXRESULT	16
+#define MINTOPARAL	16
+#define MAXCLSIZE	32
+
+#ifdef DEBUG
+#define PDbg(x) 	if (gm->DbgFlag) {CompparProt(), x, CompparUnpr();}
+#define PDbg2(x,y)	if (gm->DbgFlag) {CompparProt(), x, y, CompparUnpr();}
+#else  /* DEBUG */
+#define PDbg(x)
+#define PDbg2(x,y)
+#endif /* DEBUG */
+
+#define Prot(x) 	if (gm->DbgFlag) {CompparProt(), x, CompparUnpr();}
+#define Prot2(x,y)	if (gm->DbgFlag) {CompparProt(), x, y, CompparUnpr();}
+
+#define GSET(i)		gm->scratchBuffer[i]
+#define GSETS(i)	gm->scratchBuffer[sb_shift + (i)]
+#define CHUNK(x)	(((x) + procNN - 1) / procNN)
+
+/* jobtypes */
+typedef enum {
+  JOB_QUIT,
+  JOB_IDLE,
+  JOB_INIT_NODES,
+  JOB_INIT_EDGES,
+  JOB_EDGE_UPDATE,
+  JOB_CHAIN_UPDATE,
+  JOB_COMP_BELIEFS,
+  JOB_INTR_EVIDENCE,
+  JOB_SUM_FACTORS,
+  JOB_STO_PRIORS,
+  JOB_RES_PRIORS
+} JOBTYPE;
+
+/* memory for global exchange at each processor */
+typedef struct exchange_t {
+  BARDEC(bar)
+  VECTOR *result;
+} EXCHANGE;
+
+/* global memory and sync block */
+static struct gm_t {
+  /* Global memory block */
+  JOBTYPE jobtype;
+  int nodeNum;
+  int edgeNum;
+  int parameter;
+  BARDEC(entry)
+  BARDEC(barex)
+  LOCKDEC(lock)
+  VECTOR **globPD;
+  EXCHANGE **exchange;
+
+  int *scratchBuffer;
+  int halfScratch;
+
+  int *globEvidence;
+
+  /* performance monitors */
+  int DbgFlag;
+  size_t totalMem;
+  int enable_meas;
+} *gm;
+
+/* global variables in the local memory on each proc */
+#ifdef LITE
+static NETWORK *lNet[MAXPROCS];
+/*
+  #define procID	(SYS_THREAD_PTR->user_pid)
+*/
+#define procID	(procNN - 1 - sc_myid)
+#define gNet	lNet[procID]
+#else
+static int procID;
+static NETWORK *gNet;
+#endif /* LITE */
+
+static int procNN;
+static EXCHANGE *processorEX;
+
+static unsigned int ex_beg;
+static unsigned int ex_end;
+static unsigned int ex_time;
+static unsigned int bar_time;
+static unsigned int lock_time;
+static unsigned int start_time;
+static unsigned int unlock_time;
+
+/*******************************************************************
+  A trick to expand locking definitions in macros
+*******************************************************************/
+void CompparProt()
+{
+  LOCK(gm->lock)
+    }
+
+void CompparUnpr()
+{
+  UNLOCK(gm->lock)
+    }
+
+void CompparMeasBeg()
+{
+  if(gm->enable_meas) return;
+  gm->enable_meas = true;
+  CLOCK(ex_beg)
+#ifdef PERF
+    perf_start(perf_clus_enbl);
+#endif /* PERF */
+}
+
+void CompparMeasEnd()
+{
+  if(!gm->enable_meas) return;
+  gm->enable_meas = false;
+  CLOCK(ex_end)
+#ifdef PERF
+    perf_stop(perf_clus_enbl);
+#endif /* PERF */
+  ex_time += ex_end - ex_beg;
+}
+
+/*******************************************************************
+  Global memory management routines
+*******************************************************************/
+static char *p_malloc(length)
+     size_t length;
+{
+  char *ptr;
+
+  if(length == 0) return NULL;
+  ptr = (char*) G_MALLOC(length)
+    if(ptr == NULL) ErrorFatal("p_malloc", "Not enough memory!\n Wanted %u\n",
+                               length);
+
+  if(gm != NULL) {
+    LOCK(gm->lock)
+      gm->totalMem += length;
+    UNLOCK(gm->lock)
+      }
+
+  return ptr;
+}
+
+static void p_free(ptr)
+     char *ptr;
+{
+  G_FREE(ptr)
+    }
+
+
+/*******************************************************************
+  Jobs to be done
+*******************************************************************/
+void CompparJobInitNodes()
+{
+  int i, j, node;
+  int chunk, numNodes;
+  VECTOR prod;
+  CLUSTER *X;
+
+  /* for each node find static partitioning and probability distributions */
+  for(node=0; node<gNet->numCliques; node++) {
+    X = gNet->cnodes[node];
+    X->probDistr = gm->globPD[node];
+
+    /* find the nodes contributing to the local PD */
+    for(i=numNodes=0; i<gNet->numNodes; i++) {
+      if(GSET(i) != node) continue;
+      gNet->scratchBuffer[numNodes++] = i;
+    }
+
+    /* initilize the static partitioning */
+    chunk = CHUNK(X->stateSpaceSize);
+    X->pars = procID * chunk;
+    X->pare = X->pars + chunk;
+    if(X->pare > X->stateSpaceSize) X->pare = X->stateSpaceSize;
+
+#ifdef MASSIGN
+#ifdef ASSIGN
+#ifdef DASH
+    if(X->pare > X->pars) {
+      RANGEASSIGN((char *) (X->probDistr + X->pars),
+                  (char *) (X->probDistr + X->pare) - 1,
+                  ANL_proc_asgn(procID) >> 2)
+        }
+#endif /* DASH */
+#endif /* ASSIGN */
+#endif /* MASSIGN */
+
+    PDbg2(printf("P%d X%d (%d to %d from %d) ", procID,
+                 node, X->pars, X->pare, X->stateSpaceSize),
+          SetDump(gNet->scratchBuffer, numNodes));
+
+    if(numNodes == 0) {
+      for(i=X->pars; i<X->pare; i++) {
+        X->probDistr[i] = 1;
+      }
+    } else {
+      ComputeDecomposeIndex(gNet, X->nodes, X->numNodes, X->pars);
+      for(i=X->pars; i<X->pare; i++) {
+        for(j=0, prod = 1; j<numNodes; j++) {
+          prod *= ComputeCondProb(gNet, gNet->scratchBuffer[j]);
+        }
+        X->probDistr[i] = prod;
+        ComputeNextState(gNet, X->nodes, X->numNodes);
+      }
+    }
+    PDbg2(VectorSum(X->probDistr, X->stateSpaceSize, &prod),
+          printf("Node X%d normalization %f\n", node, prod));
+  }
+  /* will work without it for most of the time,
+     but needed to be on the safe side */
+  BARRIER(gm->barex, procNN);
+}
+
+void CompparEdgeIndices(X, E, indices, size)
+     CLUSTER *X;
+     EDGE *E;
+     int *indices;
+     int size;
+{
+  int i, j;
+  int numFree;
+  int pars, pare;
+  int chunk;
+
+  for(i=j=numFree=0; i<X->numNodes; i++) {
+    if(j<E->numNodes && X->nodes[i] == E->nodes[j]) {
+      j++;
+    } else {
+      gNet->scratchBuffer[numFree++] = X->nodes[i];
+    }
+  }
+
+  chunk = CHUNK(size);
+  pars = procID * chunk;
+  pare = pars + chunk;
+  if(pare > size) pare = size;
+
+  ComputeDecomposeIndex(gNet, gNet->scratchBuffer, numFree, pars);
+
+  for(i=pars; i<pare; i++) {
+    ComputeIndex(gNet, X->nodes, X->numNodes, indices + i);
+    ComputeNextState(gNet, gNet->scratchBuffer, numFree);
+  }
+}
+
+void CompparJobInitEdges()
+{
+  int i, j, k;
+  int ind, sb_shift;
+  int pars, pare, leng;
+  int chunk, size, msgLen;
+  CLUSTER *XU, *XD;
+  VECTOR sum;
+  EDGE *E;
+
+  /* for each edge find static partitioning and sum the joint probability distribution */
+  for(i=gNet->numCliques-1; i>0; i--) {
+    E = gNet->cedges[i - 1];
+    XU = gNet->cnodes[E->unode];
+    XD = gNet->cnodes[E->dnode];
+    msgLen = E->msgLen;
+    /* find the static scheduling */
+    if(procNN < 2 * msgLen) {
+      /* divide messages among processors */
+      chunk = CHUNK(msgLen);
+      E->pars = chunk * procID;
+      E->pare = E->pars + chunk;
+      if(E->pare > msgLen) E->pare = E->msgLen;
+      E->masterID = procID;
+      E->numToWait = 1;
+    } else {
+      /* divide processors among messages */
+      chunk = procNN / msgLen;
+#ifdef DASH
+      /* make it within a processor cluster */
+      if((chunk &= ~0x3) == 0) chunk = 2;
+#endif /* DASH */
+      /* assign a chunk of processors to a message */
+      E->pars = procID / chunk;
+      if(E->pars < msgLen) {
+        E->pare = E->pars + 1;
+        E->masterID = E->pars * chunk;
+        E->numToWait = chunk;
+        assert(E->masterID + E->numToWait <= procNN);
+      } else {
+        /* these processors will be idle */
+        E->pars = E->pare = 0;
+        E->masterID = EMPTY;
+        E->numToWait = 0;
+      }
+    }
+
+    PDbg(printf("P%d E%d W%d M%d (%d to %d from %d)\n",
+                procID, i-1, E->numToWait, E->masterID,
+                E->pars, E->pare, msgLen));
+
+    /* shift the next assignment in GSET to avoid a barrier */
+    sb_shift = (i & 0x1) ? gm->halfScratch : 0;
+
+    CompparEdgeIndices(XD, E, &GSETS(0), E->dindicesLen);
+    CompparEdgeIndices(XU, E, &GSETS(E->dindicesLen), E->uindicesLen);
+
+    /* wait till all indices are computed */
+    BARRIER(gm->barex, procNN);
+
+    if(E->numToWait) {
+
+      size = E->uindicesLen;
+      chunk = (size + E->numToWait - 1) / E->numToWait;
+      pars = (procID - E->masterID) * chunk;
+      pare = pars + chunk;
+      if(pare > size) pare = size;
+      if(pare > pars) {
+        E->uindicesLen = leng = pare - pars;
+        E->uindices = (int *) a_calloc(leng, sizeof(int));
+        bcopy(&GSETS(E->dindicesLen+pars), E->uindices, leng*sizeof(int));
+      } else {
+        E->uindicesLen = 0;
+        E->uindices = NULL;
+      }
+
+      size = E->dindicesLen;
+      chunk = (size + E->numToWait - 1) / E->numToWait;
+      pars = (procID - E->masterID) * chunk;
+      pare = pars + chunk;
+      if(pare > size) pare = size;
+      if(pare > pars) {
+        E->dindicesLen = leng = pare - pars;
+        E->dindices = (int *) a_calloc(leng, sizeof(int));
+        bcopy(&GSETS(pars), E->dindices, leng*sizeof(int));
+      } else {
+        E->dindicesLen = 0;	
+        E->dindices = NULL;
+      }
+
+    } else {
+      E->uindicesLen = E->dindicesLen = 0;
+      E->uindices = E->dindices = NULL;
+    }
+
+    ComputeDecomposeIndex(gNet, E->nodes, E->numNodes, E->pars);
+    for(j=E->pars; j<E->pare; j++) {
+      leng = E->dindicesLen;
+      ComputeIndex(gNet, XD->nodes, XD->numNodes, &ind);
+      ComputePartialSum(gNet, &sum, XD->probDistr+ind, E->dindices, leng);
+      if(E->numToWait > 1) {
+        processorEX->result[0] = sum;
+        BARRIER(gm->exchange[E->masterID]->bar, E->numToWait);
+        for(k=0, sum=0; k<E->numToWait; k++) {
+          sum += gm->exchange[E->masterID + k]->result[0];
+        }
+      }
+      leng = E->uindicesLen;
+      ComputeIndex(gNet, XU->nodes, XU->numNodes, &ind);
+      ComputeMultiplyPD(gNet, sum,  XU->probDistr+ind, E->uindices, leng);
+      ComputeNextState(gNet, E->nodes, E->numNodes);
+    }
+
+  }
+
+  /* again, not completely necessary */
+  BARRIER(gm->barex, procNN);
+}
+
+void CompparJobIntroduceEvidence()
+{
+  int i, j, k, numEvid;
+  int node = gm->nodeNum;
+  CLUSTER *X = gNet->cnodes[node];
+  EDGE *E;
+
+  for(i=numEvid=0; i<X->numNodes; i++) {
+    if(GSET(X->nodes[i]) == EMPTY) continue;
+    gNet->scratchBuffer[numEvid++] = X->nodes[i];
+  }
+   
+  ComputeDecomposeIndex(gNet, X->nodes, X->numNodes, X->pars);
+
+  for(i=X->pars; i<X->pare; i++) {
+    for(j=0; j<numEvid; j++) {
+      k = gNet->scratchBuffer[j];
+      if(GSET(k) == gNet->nodeStates[k]) continue;
+      X->probDistr[i] = 0.0;
+      break;
+    }
+    ComputeNextState(gNet, X->nodes, X->numNodes);
+  }
+
+  if(procID == 0) {
+    for(i=0; i<X->numNghb; i++) {
+      E = gNet->cedges[X->edges[i]];
+      E->status = (E->dnode == node) ? EDGE_MSG_D2U : EDGE_MSG_U2D;
+    }
+  }
+
+  BARRIER(gm->barex, procNN);
+}
+
+void ComputeIndex2(net, nodes, numNodes, index)
+     NETWORK *net;
+     int *nodes;
+     int numNodes;
+     int *index;
+{
+  int i, result;
+
+  for(i=0, result=0; i<numNodes; i++) {
+    result *= net->nodeSizes[nodes[i]];
+    result += net->nodeStates[nodes[i]];
+  }
+
+  *index = result;
+}
+
+void ComputeNextState2(net, nodes, numNodes)
+     NETWORK *net;
+     int *nodes;
+     int numNodes;
+{
+  int i, node, state;
+
+  for(i=numNodes; i>0; i--) {
+    node = nodes[i - 1];
+    state = net->nodeStates[node] + 1;
+    if(state < net->nodeSizes[node]) {
+      net->nodeStates[node] = state;
+      break;
+    }
+    net->nodeStates[node] = 0;
+  }
+}
+
+void ComputePartialSum2(net, parsum, vector, indices, size)
+     NETWORK *net;
+     VECTOR *parsum;
+     VECTOR *vector;
+     int *indices;
+     int size;
+{
+  int i;
+  VECTOR result = 0;
+  for(i=0; i<size; i++) {
+    result += vector[indices[i]];
+  }
+  *parsum = result;
+}
+
+void ComputeMultiplyPD2(net, factor, vector, indices, size)
+     NETWORK *net;
+     VECTOR factor;
+     VECTOR *vector;
+     int *indices;
+     int size;
+{
+  int i;
+  for(i=0; i<size; i++) {
+    vector[indices[i]] *= factor;
+  }
+}
+
+void CompparJobEdgeUpdate()
+{
+  int i, j;
+  int node0, ind;
+  int edge = gm->edgeNum;
+  EDGE *E = gNet->cedges[edge];
+  int numInd0, numInd1;
+  int *indices0, *indices1;
+  VECTOR sum0, sum1, ratio;
+  CLUSTER *X0, *X1;
+
+  switch(gm->parameter) {
+  case EDGE_MSG_D2U:
+    node0 = E->unode;
+    X0 = gNet->cnodes[E->unode];
+    X1 = gNet->cnodes[E->dnode];
+    numInd0 = E->uindicesLen;
+    numInd1 = E->dindicesLen;
+    indices0 = E->uindices;
+    indices1 = E->dindices;
+    break;
+  case EDGE_MSG_U2D:
+    node0 = E->dnode;
+    X0 = gNet->cnodes[E->dnode];
+    X1 = gNet->cnodes[E->unode];
+    numInd0 = E->dindicesLen;
+    numInd1 = E->uindicesLen;
+    indices0 = E->dindices;
+    indices1 = E->uindices;
+    break;
+  default:
+    return;
+  }
+
+  /* debugging
+
+     CompparProt();
+     printf("P%d E%d [ %d %d %d %d ] ", procID, edge, E->pars, E->pare,
+     E->masterID, E->numToWait);
+     SetDisplay(E->uindices, E->uindicesLen);
+     printf(" ");
+     SetDisplay(E->dindices, E->dindicesLen);
+     printf("\n");
+     CompparUnpr();
+
+  */
+
+  /* update the probability distribution of X0 by X1 */
+  ComputeDecomposeIndex(gNet, E->nodes, E->numNodes, E->pars);
+  for(i=E->pars; i<E->pare; i++) {
+    ComputeIndex2(gNet, X1->nodes, X1->numNodes, &ind);
+    ComputePartialSum2(gNet, &sum1, X1->probDistr+ind, indices1, numInd1);
+    ComputeIndex2(gNet, X0->nodes, X0->numNodes, &ind);
+    ComputePartialSum2(gNet, &sum0, X0->probDistr+ind, indices0, numInd0);
+    if(E->numToWait > 1) {
+      processorEX->result[0] = sum0;
+      processorEX->result[1] = sum1;
+      BARRIER(gm->exchange[E->masterID]->bar, E->numToWait);
+      for(j=0, sum0 = sum1 = 0; j<E->numToWait; j++) {
+        sum0 += gm->exchange[E->masterID + j]->result[0];
+        sum1 += gm->exchange[E->masterID + j]->result[1];
+      }
+    }
+    ratio = (sum0 == 0) ? 0 : sum1 / sum0;
+    ComputeMultiplyPD2(gNet, ratio, X0->probDistr+ind, indices0, numInd0);
+    ComputeNextState2(gNet, E->nodes, E->numNodes);
+  }
+
+  if(procID == 0) {
+    E->status = EDGE_NO_MSG;
+    for(i=0; i<X0->numNghb; i++) {
+      if(X0->edges[i] == edge) continue;
+      E = gNet->cedges[X0->edges[i]];
+      E->status = E->dnode == node0 ? EDGE_MSG_D2U : EDGE_MSG_U2D;
+    }
+  }
+
+  BARRIER(gm->barex, procNN);
+}
+
+void CompparJobChainUpdate()
+{
+  int i, j, ind;
+  int edge, node0, node1;
+  int level = gm->parameter;
+  int numInd0, numInd1;
+  int *indices0, *indices1;
+  VECTOR sum0, sum1, ratio;
+  CLUSTER *X0, *X1;
+  EDGE *E;
+
+  while(level-->0) {
+    node0 = GSET(level);
+    node1 = GSET(level+1);
+    X0 = gNet->cnodes[node0];
+    X1 = gNet->cnodes[node1];
+
+    if(node0 < node1) {
+      edge = node1 - 1;
+      E = gNet->cedges[edge];
+      numInd0 = E->uindicesLen;
+      numInd1 = E->dindicesLen;
+      indices0 = E->uindices;
+      indices1 = E->dindices;
+    } else {
+      edge = node0 - 1;
+      E = gNet->cedges[edge];
+      numInd0 = E->dindicesLen;
+      numInd1 = E->uindicesLen;
+      indices0 = E->dindices;
+      indices1 = E->uindices;
+    }
+
+    /* update the probability distribution of X0 by X1 */
+    ComputeDecomposeIndex(gNet, E->nodes, E->numNodes, E->pars);
+    for(i=E->pars; i<E->pare; i++) {
+      ComputeIndex(gNet, X1->nodes, X1->numNodes, &ind);
+      ComputePartialSum(gNet, &sum1, X1->probDistr+ind, indices1, numInd1);
+      ComputeIndex(gNet, X0->nodes, X0->numNodes, &ind);
+      ComputePartialSum(gNet, &sum0, X0->probDistr+ind, indices0, numInd0);
+      if(E->numToWait > 1) {
+        processorEX->result[0] = sum0;
+        processorEX->result[1] = sum1;
+        BARRIER(gm->exchange[E->masterID]->bar, E->numToWait);
+        for(j=0, sum0 = sum1 = 0; j<E->numToWait; j++) {
+          sum0 += gm->exchange[E->masterID + j]->result[0];
+          sum1 += gm->exchange[E->masterID + j]->result[1];
+        }
+      }
+      ratio = (sum0 == 0) ? 0 : sum1 / sum0;
+      ComputeMultiplyPD(gNet, ratio, X0->probDistr+ind, indices0, numInd0);
+      ComputeNextState(gNet, E->nodes, E->numNodes);
+    }
+
+    if(procID == 0) {
+      E->status = EDGE_NO_MSG;
+      for(i=0; i<X0->numNghb; i++) {
+        if(X0->edges[i] == edge) continue;
+        E = gNet->cedges[X0->edges[i]];
+        E->status = (E->dnode == node0) ? EDGE_MSG_D2U : EDGE_MSG_U2D;
+      }
+    }
+
+    BARRIER(gm->barex, procNN);
+  }
+}
+
+void CompparJobComputeBeliefs()
+{
+  int i, pos, state;
+  int node = gm->nodeNum;
+  CLUSTER *X = gNet->cnodes[node];
+  int k = gm->parameter;
+  NODE *x = gNet->nodes + k;
+
+  SetMemberPos(k, X->nodes, X->numNodes, &pos);
+  bzero(x->beliefs, x->numValues*sizeof(VECTOR));
+  for(i=X->pars; i<X->pare; i++) {
+    state = (i / X->odometer[pos]) % x->numValues;
+    x->beliefs[state] += X->probDistr[i];
+  }
+
+  LOCK(gm->lock)
+    for(i=0; i<x->numValues; i++) {
+      gm->exchange[0]->result[i] += x->beliefs[i];
+    }
+  UNLOCK(gm->lock)
+
+    BARRIER(gm->barex, procNN);
+}
+
+void CompparGenerateEdge(edge)
+     int edge;
+{
+  int k, l, p, msgLen;
+  EDGE *E = gNet->gedges[edge];
+  CLUSTER *XU = gNet->groups[E->unode];
+  CLUSTER *XD = gNet->groups[E->dnode];
+  int numNodes;
+
+  for(k=p=numNodes=0; k<XU->numNodes; k++) {
+    for(l=p; l<XD->numNodes; l++) {
+      if(XU->nodes[k] == XD->nodes[l]) {
+        gNet->scratchBuffer[numNodes++] = XU->nodes[k];
+        p = l + 1;
+        break;
+      }
+    }
+  }
+  E->numNodes = numNodes;
+  E->nodes = (int *) a_calloc(numNodes, sizeof(int));
+  for(k=0, msgLen=1; k<numNodes; k++) {
+    E->nodes[k] = gNet->scratchBuffer[k];
+    msgLen *= gNet->nodeSizes[E->nodes[k]];
+  }
+  E->uindicesLen = XU->stateSpaceSize / msgLen;
+  E->dindicesLen = XD->stateSpaceSize / msgLen;
+  E->msgLen = msgLen;
+
+  PDbg2(printf("P%d E%d %d %d %d ", procID, edge, msgLen,
+               E->dindicesLen, E->uindicesLen),
+        SetDump(E->nodes, E->numNodes));
+}
+
+void CompparReadGroup(node)
+     int node;
+{
+  int *p = &GSET(0) + MAXCLSIZE*node;
+  CLUSTER *X;
+  EDGE *E;
+
+  ClusterNodeNew(gNet, &X, p+3, *(p+2));
+
+  gNet->groups[node] = X;
+
+  X->inclNode = *(p+1);
+
+  if(node > 0) {
+    E = gNet->gedges[node-1] = (EDGE *) a_calloc(1, sizeof(EDGE));
+    E->unode = *p;
+    E->dnode = node;
+    CompparGenerateEdge(node - 1);
+  }
+}
+
+void CompparGroupProbDistr(node)
+     int node;
+{
+  int i;
+  int chunk;
+  int pars, pare;
+  CLUSTER *X = gNet->groups[node];
+
+  X->probDistr = gm->globPD[node];
+
+  /* match message division */
+  if(procNN < 2 * X->stateSpaceSize) {
+    chunk = CHUNK(X->stateSpaceSize);
+    pars = procID * chunk;
+    pare = pars + chunk;
+  } else {
+    chunk = procNN / X->stateSpaceSize;
+#ifdef DASH
+    /* make it within a processor cluster */
+    if((chunk &= ~0x3) == 0) chunk = 2;
+#endif /* DASH */
+    pare = pars = procID / chunk;
+    if(pars*chunk == procID) pare++;
+  }
+  if(pare > X->stateSpaceSize) pare = X->stateSpaceSize;
+
+  if(X->inclNode == NOTSET) {
+    for(i=pars; i<pare; i++) {
+      X->probDistr[i] = 1;
+    }
+  } else {
+    bcopy(gm->globEvidence, gNet->nodeStates, gNet->numNodes*sizeof(int));
+    ComputeIncorporateIndex(gNet, X->nodes, X->numNodes, pars);
+    for(i=pars; i<pare; i++) {
+      X->probDistr[i] = ComputeCondProb(gNet, X->inclNode);
+      ComputeNextState(gNet, X->nodes, X->numNodes);
+    }
+  }
+
+}
+
+void CompparJobSumFactors()
+{
+  int j, k;
+  int sb_shift;
+  int node, ind, chunk, uleng, dleng;
+  int size, msgLen, pars, pare;
+  int numGroups = gm->parameter;
+  int level = gm->parameter - 1;
+  CLUSTER *XU, *XD;
+  VECTOR *PD;
+  VECTOR sum;
+  EDGE *E;
+
+  /* find the edges and init them first */
+  if(procID) {
+    for(node=0; node<numGroups; node++) {
+      CompparReadGroup(node);
+    }
+  } else {
+    PD = (VECTOR *) 
+      a_calloc(gNet->groups[0]->stateSpaceSize, sizeof(VECTOR));
+  }
+
+  CompparGroupProbDistr(level);
+
+  /* we will use GSET */
+  BARRIER(gm->barex, procNN);
+
+  while(level-->0) {
+      
+    E = gNet->gedges[level];
+    XU = gNet->groups[E->unode];
+    XD = gNet->groups[E->dnode];
+
+    if(XU->probDistr == NULL) {
+      CompparGroupProbDistr(E->unode);
+    }
+      
+    if(XD->probDistr == NULL) {
+      CompparGroupProbDistr(E->dnode);
+    }
+
+    sb_shift = (level & 0x1) ? gm->halfScratch : 0;
+
+    if(E->dindicesLen > 1) {
+      CompparEdgeIndices(XD, E, &GSETS(0), E->dindicesLen);
+    }
+      
+    if(E->uindicesLen > 1) {
+      CompparEdgeIndices(XU, E, &GSETS(E->dindicesLen), E->uindicesLen);
+    }
+
+    msgLen = E->msgLen;
+    /* find static scheduling on messages */
+    if(procNN < 2 * msgLen) {
+      /* divide messages among processors */
+      chunk = CHUNK(msgLen);
+      E->pars = chunk * procID;
+      E->pare = E->pars + chunk;
+      if(E->pare > msgLen) E->pare = E->msgLen;
+      E->masterID = procID;
+      E->numToWait = 1;
+    } else {
+      /* divide processors among messages */
+      chunk = procNN / msgLen;
+#ifdef DASH
+      /* make it within a processor cluster */
+      if((chunk &= ~0x3) == 0) chunk = 2;
+#endif /* DASH */
+      /* assign a chunk of processors to a message */
+      E->pars = procID / chunk;
+      if(E->pars < msgLen) {
+        E->pare = E->pars + 1;
+        E->masterID = E->pars * chunk;
+        E->numToWait = chunk;
+        assert(E->masterID + E->numToWait <= procNN);
+      } else {
+        /* these processors will be idle */
+        uleng = dleng = 0;
+        E->pars = E->pare = 0;
+        E->masterID = EMPTY;
+        E->numToWait = 0;
+      }
+    }
+
+    /* find appropriate pointers into the indices array */
+    if(E->numToWait) {
+
+      size = E->uindicesLen;
+      chunk = (size + E->numToWait - 1) / E->numToWait;
+      pars = (procID - E->masterID) * chunk;
+      pare = pars + chunk;
+      if(pare > size) pare = size;
+      if(pare > pars) {
+        uleng = pare - pars;
+        E->uindices = &GSETS(E->dindicesLen+pars);
+      } else {
+        uleng = 0;
+      }
+
+      size = E->dindicesLen;
+      chunk = (size + E->numToWait - 1) / E->numToWait;
+      pars = (procID - E->masterID) * chunk;
+      pare = pars + chunk;
+      if(pare > size) pare = size;
+      if(pare > pars) {
+        dleng = pare - pars;
+        E->dindices = &GSETS(pars);
+      } else {
+        dleng = 0;	
+      }
+
+    }
+
+    /* save a barrier when the computations are local */
+    BARRIER(gm->barex, procNN);
+
+    PDbg(printf("P%d L%d W%d M%d (%d to %d from %d) %d(%d) %d(%d)\n",
+                procID, level, E->numToWait, E->masterID,
+                E->pars, E->pare, msgLen,
+                E->dindicesLen, dleng, E->uindicesLen, uleng));
+
+    ComputeDecomposeIndex(gNet, E->nodes, E->numNodes, E->pars);
+
+    for(j=E->pars; j<E->pare; j++) {
+
+      /* compute the partial sum from the previous node */
+      ComputeIndex(gNet, XD->nodes, XD->numNodes, &ind);
+      if(E->numToWait == 1 || E->dindicesLen < MINTOPARAL) {
+        /* avoid barrier if the size of the computation is too small */
+        if(E->dindicesLen > 1) {
+          ComputePartialSum(gNet, &sum, XD->probDistr+ind, &GSETS(0), E->dindicesLen);
+        } else {
+          sum = XD->probDistr[ind];
+        }
+      } else {
+        ComputePartialSum(gNet, &sum, XD->probDistr+ind, E->dindices, dleng);
+        processorEX->result[0] = sum;
+        BARRIER(gm->exchange[E->masterID]->bar, E->numToWait);
+        for(k=0, sum=0; k<E->numToWait; k++) {
+          sum += gm->exchange[E->masterID + k]->result[0];
+        }
+      }
+
+      /* multiply the PD of the next node */
+      ComputeIndex(gNet, XU->nodes, XU->numNodes, &ind);
+      if(E->uindicesLen > 1) {
+        ComputeMultiplyPD(gNet, sum,  XU->probDistr+ind, E->uindices, uleng);
+      } else {
+        if(procID == E->masterID) XU->probDistr[ind] *= sum;
+      }
+
+      /* compute next state */
+      ComputeNextState(gNet, E->nodes, E->numNodes);
+    }
+
+    /* debugging
+       Prot2(printf("P%d L%d X%d ", procID, level, E->unode),
+       VectorDump(XU->probDistr, XU->stateSpaceSize));
+    */
+
+    /* we do not need XD or E any longer */
+    XD->probDistr = NULL;
+    OptfactGroupFree(gNet, E->dnode);
+    E->uindices = E->dindices = NULL;
+    OptfactEdgeFree(gNet, level);
+  }
+
+  BARRIER(gm->barex, procNN);
+
+  XU = gNet->groups[0];	/* needed if level == 0 */
+  if(procID) {
+    XU->probDistr = NULL;	/* all the rest should be free by now */
+    OptfactGroupFree(gNet, 0);
+  } else {
+    bcopy(gm->globPD[0], PD, XU->stateSpaceSize * sizeof(VECTOR));
+    XU->probDistr = PD;	/* will need this to dump the result */
+  }
+}
+
+void CompparJobStorePriors()
+{
+  int i, chunk;
+  CLUSTER *X;
+  VECTOR *P;
+
+  gNet->priors = (VECTOR **) a_calloc(gNet->numCliques, sizeof(VECTOR*));
+
+  for(i=0; i<gNet->numCliques; i++) {
+    X = gNet->cnodes[i];
+    if((chunk = X->pare - X->pars) > 0) {
+      P = gNet->priors[i] = (VECTOR *) a_calloc(chunk, sizeof(VECTOR));
+      bcopy(X->probDistr + X->pars, P, chunk * sizeof(VECTOR));
+    }
+  }
+
+  BARRIER(gm->barex, procNN);
+}
+
+void CompparJobRestoreTree()
+{
+  int i, chunk;
+  CLUSTER *X;
+
+  for(i=gNet->numCliques; i>0; i--) {
+    X = gNet->cnodes[i - 1];
+    if((chunk = X->pare - X->pars) > 0) {
+      bcopy(gNet->priors[i - 1], X->probDistr + X->pars, chunk * sizeof(VECTOR));
+    }
+    if(i > 1) gNet->cedges[i - 2]->status = EDGE_NO_MSG;
+  }
+
+  BARRIER(gm->barex, procNN);
+}
+
+/*******************************************************************
+  Procedure to compute beliefs of a node
+*******************************************************************/
+void CompparBeliefs(net, node, k)
+     NETWORK *net;
+     int node, k;
+{
+  CLUSTER *X = net->cnodes[node];
+  NODE *x = net->nodes + k;
+
+  if(x->numValues > MAXRESULT || X->stateSpaceSize < MINTOPARAL) {
+    ComputeBeliefs(net, node, k);
+  } else {
+    assert(net == gNet);
+    gm->DbgFlag = DbgFlag;
+    gm->nodeNum = node;
+    gm->parameter = k;
+    bzero(processorEX->result, x->numValues*sizeof(VECTOR));
+    gm->jobtype = JOB_COMP_BELIEFS;
+    BARRIER(gm->entry, procNN);
+    CompparJobComputeBeliefs();
+    bcopy(processorEX->result, x->beliefs, x->numValues * sizeof(VECTOR));
+  }
+}
+
+
+/*******************************************************************
+  The main probabilistic inference procedure
+*******************************************************************/
+void CompparUpdateEdge(net, E, direction)
+     NETWORK *net;
+     EDGE *E;
+     int direction;
+{
+  if(E->status != direction) return;
+  assert(net == gNet);
+  gm->DbgFlag = DbgFlag;
+  gm->edgeNum = E->dnode - 1;
+  gm->parameter = direction;
+  gm->jobtype = JOB_EDGE_UPDATE;
+  BARRIER(gm->entry, procNN);
+  CompparJobEdgeUpdate();
+}
+
+
+/*******************************************************************
+  Procedure to introduce evidence
+*******************************************************************/
+void CompparIntroduceEvidence(net, node)
+     NETWORK *net;
+     int node;
+{
+  int i, j, k;
+  int state, numEvid;
+  CLUSTER *X = net->cnodes[node];      
+
+  if(X->stateSpaceSize < MINTOPARAL) {
+    ComputeIntroduceEvidence(net, node);
+  } else {
+    assert(net == gNet);
+    for(i=numEvid=0; i<X->numNodes; i++) {
+      k = X->nodes[i];
+      if(net->nodeMarked[k]) {
+        net->nodeMarked[k] = 0;
+        GSET(k) = net->nodeEvidence[k];
+        numEvid++;
+      } else {
+        GSET(k) = EMPTY;
+      }
+    }
+
+    if(numEvid) {
+      gm->jobtype = JOB_INTR_EVIDENCE;
+      gm->nodeNum = node;
+      BARRIER(gm->entry, procNN);
+      CompparJobIntroduceEvidence();
+    }
+  }
+}
+
+
+/*******************************************************************
+  Procedures to propagate evidence along a chain of nodes
+*******************************************************************/
+void CompparFindChainRecursive(pred, node, level)
+     int pred, node, level;
+{
+  int succ;
+
+  GSET(level) = node;
+
+  for(succ=0; succ<gNet->numCliques && !gm->parameter; succ++) {
+    if(!gNet->ctgt[node][succ]) continue;
+    if(pred == succ) continue;
+    CompparFindChainRecursive(node, succ, level + 1);
+    if(node<succ && gNet->cedges[succ-1]->status != EDGE_MSG_D2U) continue;
+    if(succ<node && gNet->cedges[node-1]->status != EDGE_MSG_U2D) continue;
+    if(!((volatile) gm->parameter)) gm->parameter = level + 1;
+  }
+}
+
+void CompparUpdateNode(net, node)
+     NETWORK *net;
+     int node;
+{
+  assert(net == gNet);
+  gm->parameter = 0;
+  CompparFindChainRecursive(EMPTY, node, 0);
+  /* GSET now contains the chain of nodes to update */
+  Dbg2(printf("updating chain: "), SetDump(gm->scratchBuffer, gm->parameter));
+  if(gm->parameter > 0) {
+    gm->DbgFlag = DbgFlag;
+    gm->jobtype = JOB_CHAIN_UPDATE;
+    BARRIER(gm->entry, procNN);
+    CompparJobChainUpdate();
+  }
+}
+
+
+/*******************************************************************
+  Tree initialization procedure
+*******************************************************************/
+void CompparSumJoint(net)
+     NETWORK *net;
+{
+  int node;
+  int size;
+
+  assert(net == gNet);
+  gm->DbgFlag = DbgFlag;
+  /* net->nodeMarked contains cluster assignments of the nodes */
+  bcopy(gNet->nodeMarked, gm->scratchBuffer, gNet->numNodes*sizeof(int));
+
+  for(node=0; node<gNet->numCliques; node++) {
+    size = gNet->cnodes[node]->stateSpaceSize;
+    gm->globPD[node] = (VECTOR *) p_malloc(size*sizeof(VECTOR));
+  }
+
+  gm->jobtype = JOB_INIT_NODES;
+  BARRIER(gm->entry, procNN);
+  CompparJobInitNodes();
+
+  gm->jobtype = JOB_INIT_EDGES;
+  BARRIER(gm->entry, procNN);
+  CompparJobInitEdges();
+
+  for(node=0; node<gNet->numCliques; node++) {
+    gm->globPD[node] = NULL;
+  }
+}
+
+
+/*******************************************************************
+  Optimal factoring summation procedure
+*******************************************************************/
+void CompparWriteGroup(node)
+     int node;
+{
+  int *p = &GSET(0) + MAXCLSIZE*node;
+  CLUSTER *X = gNet->groups[node];
+
+  /* write the unode for this group */
+  *p++ = (node > 0) ? gNet->gedges[node-1]->unode : EMPTY;
+
+  /* write the included node for this group */
+  *p++ = X->inclNode;
+
+  /* write the number of simple nodes */
+  *p++ = X->numNodes;
+
+  assert(X->numNodes + 3 < MAXCLSIZE);
+
+  /* write the nodes */
+  bcopy(X->nodes, p, X->numNodes*sizeof(int));
+}
+
+void CompparSumFactors(net)
+     NETWORK *net;
+{
+  int node, size;
+  int fail = 0;
+
+  assert(net == gNet);
+  gm->DbgFlag = DbgFlag;
+
+  if(gm->halfScratch < gNet->maxGTIL) {
+    gm->halfScratch = gNet->maxGTIL;
+    p_free(gm->scratchBuffer);
+    gm->scratchBuffer = (int *) p_malloc(2*gm->halfScratch*sizeof(int));
+    Dbg(printf("Half scratch is %d\n", gm->halfScratch));
+  }
+
+  /* encode information about groups into GSET */
+  for(node=0; node<gNet->numGroups && !fail; node++) {
+    CompparWriteGroup(node);
+    size = gNet->groups[node]->stateSpaceSize;
+    gm->globPD[node] = (VECTOR *) G_MALLOC(size*sizeof(VECTOR))
+      fail = (gm->globPD[node] == NULL);
+  }
+
+  if(fail) {
+    printf("CompparSumFactors: Not enough memory\n");
+    OptfactTreeFree(net);
+  } else {
+    /* copy the information about evidence nodes */
+    bcopy(net->nodeStates, gm->globEvidence, net->numNodes*sizeof(int));
+    gm->jobtype = JOB_SUM_FACTORS;
+    gm->parameter = gNet->numGroups;
+    BARRIER(gm->entry, procNN);
+    CompparJobSumFactors();
+  }
+
+  for(node=0; node<gNet->numGroups; node++) {
+    if(gm->globPD[node] == NULL) continue;
+    G_FREE((char *) gm->globPD[node])
+      gm->globPD[node] = NULL;
+  }
+}
+
+
+/*******************************************************************
+  Procedures to store and restore the prior trees
+*******************************************************************/
+
+void CompparStorePriors(net)
+     NETWORK *net;
+{
+  assert(net == gNet);
+  gm->DbgFlag = DbgFlag;
+
+  if(!net->priors) {
+    gm->jobtype = JOB_STO_PRIORS;
+    BARRIER(gm->entry, procNN);
+    CompparJobStorePriors();
+  } else {
+    printf("CompparStorePriors: Priors already allocated\n");
+  }
+}
+
+void CompparRestoreTree(net)
+     NETWORK *net;
+{
+  assert(net == gNet);
+  gm->DbgFlag = DbgFlag;
+
+  if(net->priors) {
+    gm->jobtype = JOB_RES_PRIORS;
+    BARRIER(gm->entry, procNN);
+    CompparJobRestoreTree();
+  } else {
+    printf("CompparRestorePriors: Priors not allocated\n");
+  }
+}
+
+
+/*******************************************************************
+  Parallel initialization and wrap-up procedures
+*******************************************************************/
+static void Slave()
+{
+  int i, quit=0;
+
+  PDbg(printf("Slave %d created\n", procID));
+  processorEX = (EXCHANGE *) p_malloc(sizeof(EXCHANGE));
+  BARINIT(processorEX->bar)
+    processorEX->result = (VECTOR *) p_malloc(2*sizeof(VECTOR));
+  gm->exchange[procID] = processorEX;
+
+#ifdef ASSIGN
+  PROCASSIGN(ANL_proc_asgn(procID))
+#endif /* ASSIGN */
+
+    while(!quit) {
+      BARRIER(gm->entry, procNN)
+        switch(gm->jobtype) {
+        case JOB_QUIT:
+          quit = TRUE;
+        case JOB_IDLE:
+          break;
+        case JOB_INIT_NODES:
+          CompparJobInitNodes();
+          break;
+        case JOB_INIT_EDGES:
+          CompparJobInitEdges();
+          break;
+        case JOB_EDGE_UPDATE:
+          CompparJobEdgeUpdate();
+          break;
+        case JOB_CHAIN_UPDATE:
+          CompparJobChainUpdate();
+          break;
+        case JOB_COMP_BELIEFS:
+          CompparJobComputeBeliefs();
+          break;
+        case JOB_INTR_EVIDENCE:
+          CompparJobIntroduceEvidence();
+          break;
+        case JOB_SUM_FACTORS:
+          CompparJobSumFactors();
+          break;
+        case JOB_STO_PRIORS:
+          CompparJobStorePriors();
+          break;
+        case JOB_RES_PRIORS:
+          CompparJobRestoreTree();
+          break;
+        default:
+          LOCK(gm->lock)
+            printf("Slave %d got illegal job (%d)\n", procID, gm->jobtype);
+          UNLOCK(gm->lock)
+            }
+    }
+
+#ifdef MEASURE
+  GSET(procID) = bar_time;
+#endif /* MEASURE */
+
+#ifndef LITE
+  for(i=0; i<gNet->numCliques; i++) gNet->cnodes[i]->probDistr = NULL;
+  NetworkFree(gNet);
+#endif /* LITE */
+
+  p_free((char *) processorEX->result);
+  p_free((char *) processorEX);
+
+  PDbg(printf("Slave %d finished work\n", procID));
+}
+
+#ifdef LITE
+
+void CompparCopyNet(net, pnet)
+     NETWORK *net;
+     NETWORK **pnet;
+{
+  int i;
+  NETWORK *cnet;
+  CLUSTER *X;
+  EDGE *E;
+
+  *pnet = cnet = (NETWORK *) a_calloc(1, sizeof(NETWORK));
+  bcopy(net, cnet, sizeof(NETWORK));
+
+  /* duplicate buffers that are likely to be used by other threads */
+  cnet->nodeSizes = (int *) a_calloc(net->numNodes, sizeof(int));
+  bcopy(net->nodeSizes, cnet->nodeSizes, net->numNodes*sizeof(int));
+  cnet->nodeStates = (int *) a_calloc(net->numNodes, sizeof(int));
+  bcopy(net->nodeStates, cnet->nodeStates, net->numNodes*sizeof(int));
+  cnet->nodeMarked = (int *) a_calloc(net->numNodes, sizeof(int));
+  bcopy(net->nodeMarked, cnet->nodeMarked, net->numNodes*sizeof(int));
+
+  cnet->nodeCliqueDFS = (int *) a_calloc(net->numNodes, sizeof(int));
+  bcopy(net->nodeCliqueDFS, cnet->nodeCliqueDFS, net->numNodes*sizeof(int));
+  cnet->scratchBuffer = (int *) a_calloc(net->numNodes, sizeof(int));
+  bcopy(net->scratchBuffer, cnet->scratchBuffer, net->numNodes*sizeof(int));
+  cnet->nodeEvidence = (int *) a_calloc(net->numNodes, sizeof(int));
+  bcopy(net->nodeEvidence, cnet->nodeEvidence, net->numNodes*sizeof(int));
+
+  cnet->cnodes = (CLUSTER **) a_calloc(net->numCliques, sizeof(CLUSTER*));
+  cnet->cedges = (EDGE **) a_calloc(net->numCliques-1, sizeof(EDGE*));
+
+  /* copy the cluster tree nodes */
+  for(i=0; i<net->numCliques; i++) {
+
+    X = cnet->cnodes[i] = (CLUSTER *) a_calloc(1, sizeof(CLUSTER));
+    bcopy(net->cnodes[i], X, sizeof(CLUSTER));
+    X->nodes = (int *) a_calloc(X->numNodes, sizeof(int));
+    bcopy(net->cnodes[i]->nodes, X->nodes, X->numNodes*sizeof(int));
+    X->edges = (int *) a_calloc(X->numNghb, sizeof(int));
+    bcopy(net->cnodes[i]->edges, X->edges, X->numNghb*sizeof(int));
+
+    if(i == net->numCliques-1) break;
+
+    E = cnet->cedges[i] = (EDGE *) a_calloc(1, sizeof(EDGE));
+    bcopy(net->cedges[i], E, sizeof(EDGE));
+    E->nodes = (int *) a_calloc(E->numNodes, sizeof(int));
+    bcopy(net->cedges[i]->nodes, E->nodes, E->numNodes*sizeof(int));
+
+  }
+
+}
+
+void CompparFreeNet(cnet)
+     NETWORK *cnet;
+{
+  int i;
+
+  if(cnet->nodeSizes)
+    free((char*) cnet->nodeSizes);
+  if(cnet->nodeStates)
+    free((char*) cnet->nodeStates);
+  if(cnet->nodeMarked)
+    free((char*) cnet->nodeMarked);
+
+  if(cnet->nodeCliqueDFS)
+    free((char*) cnet->nodeCliqueDFS);
+  if(cnet->scratchBuffer)
+    free((char*) cnet->scratchBuffer);
+  if(cnet->nodeEvidence)
+    free((char*) cnet->nodeEvidence);
+
+  /* free the additional structures in the cluster tree */
+  for(i=0; i<cnet->numCliques; i++) {
+    if(cnet->cnodes[i]->nodes) free((char*) cnet->cnodes[i]->nodes);
+    if(cnet->cnodes[i]->edges) free((char*) cnet->cnodes[i]->edges);
+    if(cnet->cnodes[i]) free((char*) cnet->cnodes[i]);
+    if(cnet->priors && cnet->priors[i]) free((char*) cnet->priors[i]);
+    if(i == cnet->numCliques-1) break;
+    if(cnet->cedges[i]->nodes) free((char*) cnet->cedges[i]->nodes);
+    if(cnet->cedges[i]->uindices) free((char*) cnet->cedges[i]->uindices);
+    if(cnet->cedges[i]->dindices) free((char*) cnet->cedges[i]->dindices);
+    if(cnet->cedges[i]) free((char*) cnet->cedges[i]);
+  }
+
+  if(cnet->cnodes)
+    free((char*) cnet->cnodes);
+  if(cnet->priors)
+    free((char*) cnet->priors);
+  if(cnet->cedges)
+    free((char*) cnet->cedges);
+
+  free((char*) cnet);
+}
+
+#endif /* LITE */
+
+void CompparInit(net, numProcs)
+     NETWORK *net;
+     int numProcs;
+{
+  int i;
+
+  if(numProcs < 1) {
+    numProcs = 1;
+  } else if(numProcs > MAXPROCS) {
+    numProcs = MAXPROCS;
+  }
+
+  procNN = numProcs;
+
+  printf("Parallel implementation for %d processors\n", numProcs);
+
+  MAIN_INITENV(,AV_MEMORY)
+
+    gm = (struct gm_t*) G_MALLOC(sizeof(struct gm_t))
+    if(!gm) {
+      ErrorFatal("CompparInit", "Could Not Allocate Global Memory\n");
+    }
+  gm->totalMem = sizeof(struct gm_t);
+
+  gm->jobtype = JOB_IDLE;
+
+  BARINIT(gm->entry)
+    BARINIT(gm->barex)
+    LOCKINIT(gm->lock)
+
+    gNet = net;
+  gm->DbgFlag = DbgFlag;
+
+  /* this buffers will be used to transfer information to other procs */
+  gm->globPD = (VECTOR **) p_malloc(2*net->numNodes*sizeof(VECTOR*));
+  gm->exchange = (EXCHANGE **) p_malloc(numProcs*sizeof(EXCHANGE*));
+  gm->halfScratch = MAX(MAXCLSIZE*net->numNodes,net->maxCTIL);
+  gm->scratchBuffer = (int *) p_malloc(2*gm->halfScratch*sizeof(int));
+  Dbg(printf("Half scratch at the initialization is %d\n", gm->halfScratch));
+  gm->globEvidence = (int*) p_malloc(net->numNodes*sizeof(int));
+
+  for(i=0; i<2*net->numNodes; i++) {
+    gm->globPD[i] = NULL;
+  }
+
+  gm->enable_meas = false;
+
+  printf("Master process creates slaves\n");
+
+#ifdef LITE
+  lNet[0] = net;
+  for(i=1; i < procNN; i++) {
+    CompparCopyNet(net, &lNet[i]);
+  }
+
+  for(i=1; i < procNN; i++) CREATE(Slave)
+
+                              printf("Master id %d, should be 0\n", procID);
+  assert(procID == 0);
+#else
+  for(procID=1; procID < procNN; procID++) CREATE(Slave)
+                                             procID = 0;
+#endif /* LITE */
+
+#ifdef ASSIGN
+  PROCASSIGN(ANL_proc_asgn(procID))
+#endif /* ASSIGN */
+
+    PDbg(printf("Master process got id %d\n", procID));
+  processorEX = (EXCHANGE*) p_malloc(sizeof(EXCHANGE));
+  BARINIT(processorEX->bar)
+    processorEX->result = (VECTOR *) p_malloc(MAXRESULT*sizeof(VECTOR));
+  gm->exchange[0] = processorEX;
+   
+#ifdef PERF
+  printf("perf_init(0x%x, 0x%x)\n", perf_clus_enbl, ANL_num_clusters);
+  perf_init(perf_clus_enbl, ANL_num_clusters);
+#endif /* PERF */
+
+}
+
+void CompparExit()
+{
+  int i;
+  size_t tm = gm->totalMem;
+
+  if(gm == NULL) return;
+
+#ifdef PERF
+  perf_end(perf_clus_enbl);
+#endif /* PERF */
+
+#ifdef LITE
+  for(i=1; i < procNN; i++) {
+    CompparFreeNet(lNet[i]);
+  }
+#endif /* LITE */
+
+  for(i=0; i<gNet->numCliques; i++) {
+    if(gNet->cnodes[i]->probDistr == NULL) continue;
+    G_FREE((char *) gNet->cnodes[i]->probDistr);
+    gNet->cnodes[i]->probDistr = NULL;
+  }
+  NetworkFree(gNet);
+
+  p_free(gm->globPD);
+  p_free(gm->exchange);
+  p_free(processorEX->result);
+  p_free(processorEX);
+  p_free((char*) gm->globEvidence);
+
+  gm->jobtype = JOB_QUIT;
+  BARRIER(gm->entry, procNN);
+
+  WAIT_FOR_END(procNN - 1)
+
+#ifdef MEASURE
+
+    GSET(0) = bar_time;
+
+  for(i=1; i<procNN; i++) {
+    bar_time += GSET(i);
+  }
+
+  printf("Execution time %.3f (%.3f)\n", 1.e-6 * ex_time,
+         1.e-6 * procNN * ex_time);
+
+  printf("Barrier time %.3f (%.2f%% of the total)\n", 1.e-6 * bar_time,
+         (ex_time == 0) ? 0.0 : 1.e+2 * bar_time / (procNN * ex_time));
+
+  SetDump(gm->scratchBuffer, procNN);
+
+#endif /* MEASURE */
+
+  p_free((char*) gm->scratchBuffer);
+  G_FREE(gm)
+
+    printf("Local memory used 0x%x bytes (%d Mb)\n",
+           TotalMemGet(), (TotalMemGet() >> 20));
+
+  printf("Global memory used 0x%x bytes (%d Mb)\n",
+         tm, tm >> 20);
+
+  MAIN_END
+    }
+
+#endif /* MULTIPROC */

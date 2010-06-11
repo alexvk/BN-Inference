@@ -1,0 +1,90 @@
+#############################################################
+# $RCSfile: Makefile,v $
+# $Author: alexvk $
+# $Revision: 1.1 $
+# $Date: 1997/10/15 03:06:05 $
+#############################################################
+# CAUTION:  Make changes to Makefile.in (not makefile), then run
+# "make -f Makefile.in depend" before running:
+# "make infer" to make an inference program
+# "make econvert" to make a conversion program
+# "make process" to make a case processing program
+# "make decompose" to make a noisy-OR decomposition program
+# "make sample" to make a program for producing sampling
+#############################################################
+
+#CFLAGS= -O -DMULTIPROC ${DEBUG}
+#CFLAGS= -O ${DEBUG}
+CFLAGS= -g ${DEBUG}
+
+#flags for parallel performance mesurement
+PFLAGS = -DMEASURE -DASSIGN
+
+CC = /usr/bin/gcc
+
+NETWORKOBJ = network.o cluster.o compute.o comppar.o optfact.o clique.o graph.o set.o search.o utils.o
+SAMPLEOBJ = sample.o logicsample.o libinfer.a
+DECOMPOSEOBJ = decompose.o libinfer.a
+INFEROBJ = infer.o comppar.o libinfer.a
+SRCS = 	infer.c network.c cluster.c compute.c clique.c graph.c set.c search.c utils.c optfact.c
+HEADERS = cmd.h network.h cluster.h clique.h graph.h set.h utils.h
+OTHER_SRCS = README Makefile econvert.l process.l sample.c logicsample.c decompose.c
+ALL_SRCS = $(SRCS) $(HEADERS) $(OTHER_SRCS)
+NETWORKS = Asia A.erg
+
+infer: $(INFEROBJ) comppar.o
+	$(CC) -o infer $(INFEROBJ) $(MACROLIB) $(PERFLIB)
+
+unipr:	infer.o optfact.o libinfer.a
+	m4 $(MACRONOT) comppar.U > comppar.c
+	$(CC) $(CFLAGS) $(PFALGS) -c comppar.c
+	$(CC) $(LDFLAGS) -o infer $(INFEROBJ) $(LIB)
+	-@ rm comppar.o comppar.c
+
+process: process.l network.h set.h utils.h libinfer.a
+	lex process.l
+	$(CC) $(CFLAGS) -c lex.yy.c
+	$(CC) $(LDFLAGS) -o process lex.yy.o libinfer.a -ll $(MACROLIB) $(PERFLIB) $(LIB)
+	-@ rm lex.yy.*
+
+econvert: econvert.l network.h set.h utils.h libinfer.a
+	lex econvert.l
+	$(CC) $(CFLAGS) -c lex.yy.c
+	$(CC) $(LDFLAGS) -o econvert lex.yy.o libinfer.a -ll $(LIB)
+	-@ rm lex.yy.*
+
+decompose: $(DECOMPOSEOBJ)
+	$(CC) $(LDFLAGS) -o decompose $(DECOMPOSEOBJ) -ll $(LIB)
+
+sample: $(SAMPLEOBJ)
+	$(CC) $(LDFLAGS) -o sample $(SAMPLEOBJ) $(LIB)
+
+libinfer.a: $(NETWORKOBJ)
+	-@ rm libinfer.a
+	-@ ar rcv libinfer.a $(NETWORKOBJ)
+	-@ ranlib libinfer.a
+
+# dependencies for macroprocessor
+comppar.o: comppar.U
+	m4 $(MACROM4F) comppar.U > comppar.c
+	$(CC) $(CFLAGS) $(PFLAGS) -c comppar.c
+
+clean: 
+	-@ rm -f *~ core a.out comppar.c lex.yy.c *.o
+
+tar: 
+	-@ mkdir infer
+	-@ cp README infer
+	-@ cp $(ALL_SRCS) infer
+	-@ cp $(NETWORKS) infer
+	tar cvf infer.tar infer
+	compress infer.tar
+	-@ rm -r infer
+
+depend:	Makefile $(SRCS)
+	- mv -f makefile makefile.old
+	@ sed -n -e '1,/[D]O NOT MAKE ANY CHANGES/p' Makefile.in > makefile
+	@ echo "" >> makefile
+	@ $(CC) -M $(SRCS) >> makefile
+
+#DO NOT MAKE ANY CHANGES ON OR BELOW THIS LINE

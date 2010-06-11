@@ -1,0 +1,116 @@
+newgate 397> infer Test2
+Belief net:
+0 1 
+1 0 
+Total Links = 1
+inverse MC order [ 0 1 ]
+Triangulated network:
+0 1 
+1 0 
+Total Links = 1
+Entering CliqueTreeExpand(notEnd=-1, candEnd=1): [ 0 1 ]
+Entering CliqueTreeExpand(notEnd=-1, candEnd=0): [ 1 ]
+All subgraphs found are maximal cliques
+Number of cliques found 1
+X 4 [ 0 1 ]
+Node cliques [ 0 0 ]
+The network has a total of 4 potentials
+Join tree table graph:
+0 
+Total Links = 0
+max indices length sum 2
+ClusterTreeGenerate took 0.0000 seconds
+Local memory used: 0x237 bytes
+Commands available:
+q               Quit
+n               Display network
+t               Display join tree
+i               Initialize join tree
+e               Enter evidence
+a               Display all evidence
+r               Reset evidence
+u               Update join tree
+b               Display beliefs
+s               Evaluate a single node query
+o               Optimal factoring query
+d               Dump probability distribution
+=               Toggle debugging
+h               Display Help
+infer > i
+This will take a while ...
+Node x0 included in X0
+Node x1 included in X0
+X0   1.000000
+ClusterTreeInit took 0.0000 seconds
+StorePriors took 0.0000 seconds
+Local memory used: 0x27b bytes
+infer > o
+Enter query node (0 ... 1): 0
+Enter query node (0 ... 1): 1
+Enter query node (0 ... 1): 
+Enter conditioning node (0 ... 1): 
+You have entered query p(x0,x1)
+proceed (y/n)?y
+Making a query
+inverse MC order [ 0 1 ]
+Triangulated network:
+0 1 
+1 0 
+Total Links = 1
+Entering CliqueTreeExpand(notEnd=-1, candEnd=1): [ 0 1 ]
+Entering CliqueTreeExpand(notEnd=-1, candEnd=0): [ 1 ]
+All subgraphs found are maximal cliques
+Number of cliques found 1
+C0 [-1] [ 0 1 ]
+Number of groups found 2
+X 4 [ 0 1 ]
+G0 [1] [ 0 1 ]
+X 2 [ 0 ]
+G1 [0] [ 0 ]
+Group join tree graph:
+0 1 
+1 0 
+Total Links = 1
+The query will require about 0x40 bytes (0 Mb)
+E0 (X0->(2)->X1) [ 0 ]
+X0 [1] 538264448.000000
+X1 [0] 269132176.000000
+X0 72432141076839424.000000
+OptfactQuery took 0.0000 seconds
+[ 0.2500 0.2500 0.2500 0.2500 ]
+infer > e
+Enter node to instantiate (0 ... 1): 0
+   Enter value of node Var1 (0 ... 1): 0
+Enter node to instantiate (0 ... 1): 
+Var1 set to V1-0 (new)
+infer > o
+Enter query node (0 ... 1): 1
+Enter query node (0 ... 1): 
+Enter conditioning node (0 ... 1): 
+You have entered query p(x1)
+proceed (y/n)?y
+Making a query
+inverse MC order [ 1 -1 ]
+Triangulated network:
+0 0 
+0 0 
+Total Links = 0
+Entering CliqueTreeExpand(notEnd=-1, candEnd=0): [ 1 ]
+All subgraphs found are maximal cliques
+Number of cliques found 1
+C0 [-1] [ 1 ]
+Number of groups found 1
+X 2 [ 1 ]
+G0 [1] [ 1 ]
+Group join tree graph:
+0 
+Total Links = 0
+The query will require about 0x20 bytes (0 Mb)
+X0 [1]        NaN
+OptfactQuery took  NaN seconds
+[    NaN    NaN ]
+infer > q
+Total memory used 0x1643 bytes (0 Mb)
+
+
+
