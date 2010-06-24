@@ -39,4 +39,6 @@ extern int DbgFlag;
 
 extern void* a_calloc(unsigned int n1, unsigned int n2);
 
+extern unsigned long TotalMemGet();
+
 #endif /* UTILS_INCLUDED */

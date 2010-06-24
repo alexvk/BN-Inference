@@ -72,16 +72,18 @@ comppar.o: comppar.U
 clean: 
 	-@ rm -f *~ core a.out comppar.c lex.yy.c *.o
 
+superclean: clean
+	-@ rm -f infer *.old
+
 tar: 
 	-@ mkdir infer
 	-@ cp README infer
 	-@ cp $(ALL_SRCS) infer
 	-@ cp $(NETWORKS) infer
-	tar cvf infer.tar infer
-	compress infer.tar
+	tar czvf infer.tgz infer
 	-@ rm -r infer
 
-depend:	Makefile $(SRCS)
+depend:	Makefile.in $(SRCS)
 	- mv -f makefile makefile.old
 	@ sed -n -e '1,/[D]O NOT MAKE ANY CHANGES/p' Makefile.in > makefile
 	@ echo "" >> makefile

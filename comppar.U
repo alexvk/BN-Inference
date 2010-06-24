@@ -99,7 +99,7 @@ static struct gm_t {
 
   /* performance monitors */
   int DbgFlag;
-  size_t totalMem;
+  long totalMem;
   int enable_meas;
 } *gm;
 
@@ -127,18 +127,20 @@ static unsigned int lock_time;
 static unsigned int start_time;
 static unsigned int unlock_time;
 
+
 /*******************************************************************
   A trick to expand locking definitions in macros
 *******************************************************************/
+
 void CompparProt()
 {
   LOCK(gm->lock)
-    }
+}
 
 void CompparUnpr()
 {
   UNLOCK(gm->lock)
-    }
+}
 
 void CompparMeasBeg()
 {
@@ -146,7 +148,7 @@ void CompparMeasBeg()
   gm->enable_meas = true;
   CLOCK(ex_beg)
 #ifdef PERF
-    perf_start(perf_clus_enbl);
+  perf_start(perf_clus_enbl);
 #endif /* PERF */
 }
 
@@ -156,14 +158,16 @@ void CompparMeasEnd()
   gm->enable_meas = false;
   CLOCK(ex_end)
 #ifdef PERF
-    perf_stop(perf_clus_enbl);
+  perf_stop(perf_clus_enbl);
 #endif /* PERF */
   ex_time += ex_end - ex_beg;
 }
 
+
 /*******************************************************************
   Global memory management routines
 *******************************************************************/
+
 static char *p_malloc(length)
      size_t length;
 {
@@ -171,14 +175,14 @@ static char *p_malloc(length)
 
   if(length == 0) return NULL;
   ptr = (char*) G_MALLOC(length)
-    if(ptr == NULL) ErrorFatal("p_malloc", "Not enough memory!\n Wanted %u\n",
+  if(ptr == NULL) ErrorFatal("p_malloc", "Not enough memory!\n Wanted %u\n",
                                length);
 
   if(gm != NULL) {
     LOCK(gm->lock)
-      gm->totalMem += length;
+    gm->totalMem += length;
     UNLOCK(gm->lock)
-      }
+  }
 
   return ptr;
 }
@@ -187,16 +191,18 @@ static void p_free(ptr)
      char *ptr;
 {
   G_FREE(ptr)
-    }
+}
 
 
 /*******************************************************************
   Jobs to be done
 *******************************************************************/
+
 void CompparJobInitNodes()
 {
   int i, j, node;
-  int chunk, numNodes;
+  long chunk;
+  int numNodes;
   VECTOR prod;
   CLUSTER *X;
 
@@ -223,8 +229,8 @@ void CompparJobInitNodes()
     if(X->pare > X->pars) {
       RANGEASSIGN((char *) (X->probDistr + X->pars),
                   (char *) (X->probDistr + X->pare) - 1,
-                  ANL_proc_asgn(procID) >> 2)
-        }
+                  ANL_proc_asgn(procID)/4)
+    }
 #endif /* DASH */
 #endif /* ASSIGN */
 #endif /* MASSIGN */
@@ -676,7 +682,8 @@ void CompparJobComputeBeliefs()
 void CompparGenerateEdge(edge)
      int edge;
 {
-  int k, l, p, msgLen;
+  int k, l, p;
+  long msgLen;
   EDGE *E = gNet->gedges[edge];
   CLUSTER *XU = gNet->groups[E->unode];
   CLUSTER *XD = gNet->groups[E->dnode];
@@ -731,8 +738,8 @@ void CompparGroupProbDistr(node)
      int node;
 {
   int i;
-  int chunk;
-  int pars, pare;
+  long chunk;
+  long pars, pare;
   CLUSTER *X = gNet->groups[node];
 
   X->probDistr = gm->globPD[node];
@@ -772,8 +779,10 @@ void CompparJobSumFactors()
 {
   int j, k;
   int sb_shift;
-  int node, ind, chunk, uleng, dleng;
-  int size, msgLen, pars, pare;
+  int node, ind;
+  long chunk;
+  int uleng, dleng;
+  long size, msgLen, pars, pare;
   int numGroups = gm->parameter;
   int level = gm->parameter - 1;
   CLUSTER *XU, *XD;
@@ -788,7 +797,7 @@ void CompparJobSumFactors()
     }
   } else {
     PD = (VECTOR *) 
-      a_calloc(gNet->groups[0]->stateSpaceSize, sizeof(VECTOR));
+      a_calloc((int)gNet->groups[0]->stateSpaceSize, sizeof(VECTOR));
   }
 
   CompparGroupProbDistr(level);
@@ -983,9 +992,11 @@ void CompparJobRestoreTree()
   BARRIER(gm->barex, procNN);
 }
 
+
 /*******************************************************************
   Procedure to compute beliefs of a node
 *******************************************************************/
+
 void CompparBeliefs(net, node, k)
      NETWORK *net;
      int node, k;
@@ -1012,6 +1023,7 @@ void CompparBeliefs(net, node, k)
 /*******************************************************************
   The main probabilistic inference procedure
 *******************************************************************/
+
 void CompparUpdateEdge(net, E, direction)
      NETWORK *net;
      EDGE *E;
@@ -1031,6 +1043,7 @@ void CompparUpdateEdge(net, E, direction)
 /*******************************************************************
   Procedure to introduce evidence
 *******************************************************************/
+
 void CompparIntroduceEvidence(net, node)
      NETWORK *net;
      int node;
@@ -1067,6 +1080,7 @@ void CompparIntroduceEvidence(net, node)
 /*******************************************************************
   Procedures to propagate evidence along a chain of nodes
 *******************************************************************/
+
 void CompparFindChainRecursive(pred, node, level)
      int pred, node, level;
 {
@@ -1105,6 +1119,7 @@ void CompparUpdateNode(net, node)
 /*******************************************************************
   Tree initialization procedure
 *******************************************************************/
+
 void CompparSumJoint(net)
      NETWORK *net;
 {
@@ -1138,6 +1153,7 @@ void CompparSumJoint(net)
 /*******************************************************************
   Optimal factoring summation procedure
 *******************************************************************/
+
 void CompparWriteGroup(node)
      int node;
 {
@@ -1162,7 +1178,8 @@ void CompparWriteGroup(node)
 void CompparSumFactors(net)
      NETWORK *net;
 {
-  int node, size;
+  int node;
+  long size;
   int fail = 0;
 
   assert(net == gNet);
@@ -1241,6 +1258,7 @@ void CompparRestoreTree(net)
 /*******************************************************************
   Parallel initialization and wrap-up procedures
 *******************************************************************/
+
 static void Slave()
 {
   int i, quit=0;
@@ -1465,21 +1483,21 @@ void CompparInit(net, numProcs)
 
   for(i=1; i < procNN; i++) CREATE(Slave)
 
-                              printf("Master id %d, should be 0\n", procID);
+  printf("Master id %d, should be 0\n", procID);
   assert(procID == 0);
 #else
   for(procID=1; procID < procNN; procID++) CREATE(Slave)
-                                             procID = 0;
+  procID = 0;
 #endif /* LITE */
 
 #ifdef ASSIGN
   PROCASSIGN(ANL_proc_asgn(procID))
 #endif /* ASSIGN */
 
-    PDbg(printf("Master process got id %d\n", procID));
+  PDbg(printf("Master process got id %d\n", procID));
   processorEX = (EXCHANGE*) p_malloc(sizeof(EXCHANGE));
   BARINIT(processorEX->bar)
-    processorEX->result = (VECTOR *) p_malloc(MAXRESULT*sizeof(VECTOR));
+  processorEX->result = (VECTOR *) p_malloc(MAXRESULT*sizeof(VECTOR));
   gm->exchange[0] = processorEX;
    
 #ifdef PERF
@@ -1492,7 +1510,7 @@ void CompparInit(net, numProcs)
 void CompparExit()
 {
   int i;
-  size_t tm = gm->totalMem;
+  long tm = gm->totalMem;
 
   if(gm == NULL) return;
 
@@ -1526,7 +1544,7 @@ void CompparExit()
 
 #ifdef MEASURE
 
-    GSET(0) = bar_time;
+  GSET(0) = bar_time;
 
   for(i=1; i<procNN; i++) {
     bar_time += GSET(i);
@@ -1545,13 +1563,13 @@ void CompparExit()
   p_free((char*) gm->scratchBuffer);
   G_FREE(gm)
 
-    printf("Local memory used 0x%x bytes (%d Mb)\n",
-           TotalMemGet(), (TotalMemGet() >> 20));
+  printf("Local memory used 0x%x bytes (%d Mb)\n",
+           TotalMemGet(), TotalMemGet()/1024L/1024L);
 
   printf("Global memory used 0x%x bytes (%d Mb)\n",
-         tm, tm >> 20);
+         tm, tm/1024L/1024L);
 
   MAIN_END
-    }
+}
 
 #endif /* MULTIPROC */

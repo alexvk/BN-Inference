@@ -295,7 +295,7 @@ char **argv;
 #else
     NetworkFree(net);
     printf("Total memory used 0x%o bytes (%.3f Mb)\n",
-	   TotalMemGet(), 0.001 * (double) (TotalMemGet() >> 10));
+	   TotalMemGet(), 0.001 * (double) (TotalMemGet()/1024L));
 #endif /* MULTIPROC */
 
     return(0);

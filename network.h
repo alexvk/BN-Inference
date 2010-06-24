@@ -57,7 +57,7 @@ typedef struct node_t {
   VECTOR *beliefs;		/* inferred beliefs */
   int numParents;
   int *parentIndices;
-  int *odometer;
+  long *odometer;
   int numChildren;
   int *childIndices;
   int numProbs;
@@ -93,7 +93,7 @@ typedef struct network_t {
 
   /* Cluster tree specific */
   int numCliques;
-  int totPotentials;
+  long totPotentials;
   int *cliqueMarked;
   CLUSTER **cnodes;
   VECTOR **priors;		/* prior PD's */

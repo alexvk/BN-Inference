@@ -25,13 +25,14 @@ void ClusterNodeNew(net, XP, nodes, numNodes)
      int *nodes;
      int numNodes;
 {
-  int i, ss;
+  int i;
+  long ss = 1L;
   CLUSTER *X = (CLUSTER *) a_calloc(1, sizeof(CLUSTER));
    
   X->numNodes = numNodes;
   X->nodes = (int *) a_calloc(numNodes, sizeof(int));
-  X->odometer = (int *) a_calloc(numNodes, sizeof(int));
-  for(i=numNodes, ss=1; i>0; i--) {
+  X->odometer = (long *) a_calloc(numNodes, sizeof(long));
+  for(i=numNodes; i>0; i--) {
     X->odometer[i - 1] = ss;
     ss *= net->nodeSizes[nodes[i - 1]];
   }
@@ -58,7 +59,7 @@ void ClusterEdgesGenerate(net)
        GraphTableDump(net->ctgt, net->numCliques));
 
   net->cedges = (EDGE **) a_calloc(net->numCliques-1, sizeof(EDGE*));
-   
+
   /* connect corresponding edges and nodes */
   for(i=0; i<net->numCliques; i++) {
 
@@ -136,6 +137,15 @@ void ClusterPrintIndent(net, node)
   }
 }
 
+void ClusterPrintGroupIndent(net, node)
+     NETWORK *net;
+     int node;
+{
+  while(node) {
+    node = net->gedges[node - 1]->unode;
+    printf(" ");
+  }
+}
 
 void ClusterNodeDump(net, node)
      NETWORK *net;
@@ -145,7 +155,20 @@ void ClusterNodeDump(net, node)
   ClusterPrintIndent(net, node);
   printf("X%d ", node);
   SetDisplay(X->nodes, X->numNodes);
-  printf(" %d ", X->stateSpaceSize);
+  printf(" %ld ", X->stateSpaceSize);
+  SetDisplay(X->edges, X->numNghb);
+  printf("\n");
+}
+
+void ClusterGroupNodeDump(net, node)
+     NETWORK *net;
+     int node;
+{
+  CLUSTER *X = net->groups[node];
+  ClusterPrintGroupIndent(net, node);
+  printf("X%d ", node);
+  SetDisplay(X->nodes, X->numNodes);
+  printf(" %ld ", X->stateSpaceSize);
   SetDisplay(X->edges, X->numNghb);
   printf("\n");
 }
@@ -158,7 +181,29 @@ void ClusterEdgeDump(net, edge)
   ClusterPrintIndent(net, E->unode);
   printf("E%d (X%d->X%d) ", edge, E->unode, E->dnode);
   SetDisplay(E->nodes, E->numNodes);
-  printf(" %d (%d %d)", E->msgLen, E->uindicesLen, E->dindicesLen);
+  printf(" %ld (%ld %ld)", E->msgLen, E->uindicesLen, E->dindicesLen);
+  switch (E->status) {
+  case EDGE_NO_MSG:
+    printf("\n");
+    break;
+  case EDGE_MSG_D2U:
+    printf(" message up\n");
+    break;
+  case EDGE_MSG_U2D:
+    printf(" message down\n");
+    break;
+  }
+}
+
+void ClusterGroupEdgeDump(net, edge)
+     NETWORK *net;
+     int edge;
+{
+  EDGE *E = net->gedges[edge];
+  ClusterPrintGroupIndent(net, E->unode);
+  printf("E%d (X%d->X%d) ", edge, E->unode, E->dnode);
+  SetDisplay(E->nodes, E->numNodes);
+  printf(" %ld (%ld %ld)", E->msgLen, E->uindicesLen, E->dindicesLen);
   switch (E->status) {
   case EDGE_NO_MSG:
     printf("\n");
@@ -189,6 +234,19 @@ void ClusterTreeDisplay (net)
     for(i=0; i<net->numCliques; i++) {
       if(i) ClusterEdgeDump(net, i - 1);
       ClusterNodeDump(net, i);
+    }
+  }
+}
+
+void ClusterGroupsDisplay(net)
+     NETWORK *net;
+{
+  int i;
+  if(net->numGroups) {
+    printf("Group tree:\n");
+    for(i=0; i<net->numGroups; i++) {
+      if(i) ClusterGroupEdgeDump(net, i - 1);
+      ClusterGroupNodeDump(net, i);
     }
   }
 }

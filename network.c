@@ -139,7 +139,7 @@ void NetworkAnalyze(net)
     for(j=0; j<x->numParents; j++)
       net->scratchBuffer[j] = net->nodes[x->parentIndices[j]].numValues;
     net->scratchBuffer[j++] = x->numValues;
-    x->odometer = (int *) a_calloc(j, sizeof(int));
+    x->odometer = (long *) a_calloc(j, sizeof(long));
     OdometerInitialize(x->odometer, net->scratchBuffer, j);
   }
 }

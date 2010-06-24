@@ -115,16 +115,20 @@ void OptfactEdgesGenerate(net)
   int i, j, k, l, p;
   int maxSumLen = 2;
   CLUSTER *XD, *XU;
-  int numNodes;
+  int numNodes, numEdges;
   int maxu = 1;
   int maxd = 1;
   EDGE *E;
    
-  /* since we propagate only up we do not need to store
-     the information about the edges in the clusters itself */
   for(i=0; i<net->numGroups; i++) {
 
     XD = net->groups[i];
+
+    for(j=i+1, numEdges=1; j<net->numGroups; j++) {
+      if(net->graphTable[i][j]) numEdges++;
+    }
+
+    XD->edges = (int *) a_calloc(numEdges, sizeof(int));
 
     for(j=0; j<i; j++) {
 
@@ -135,6 +139,8 @@ void OptfactEdgesGenerate(net)
       E = net->gedges[i - 1] = (EDGE *) a_calloc(1, sizeof(EDGE));
       E->unode = j;
       E->dnode = i;
+      XU->edges[XU->numNghb++] = i - 1;
+      XD->edges[XD->numNghb++] = i - 1;
       for(k=p=numNodes=0; k<XU->numNodes; k++) {
         for(l=p; l<XD->numNodes; l++) {
           if(XU->nodes[k] == XD->nodes[l]) {
@@ -186,7 +192,7 @@ void OptfactGroupProbDistr(net, node)
   CLUSTER *X = net->groups[node];
   VECTOR sum;
 
-  X->probDistr = (VECTOR*) a_calloc(X->stateSpaceSize, sizeof(VECTOR));
+  X->probDistr = (VECTOR*) a_calloc((int)X->stateSpaceSize, sizeof(VECTOR));
 
   if(X->inclNode == EMPTY) {
     for(i=0; i<X->stateSpaceSize; i++) {
@@ -247,7 +253,7 @@ void OptfactSumFactors(net)
       ComputeMultiplyPD(net, sum,  XU->probDistr + index, net->uindices, E->uindicesLen);
       ComputeNextState(net, E->nodes, E->numNodes);
     }
-      
+
     Dbg2(VectorSum(XU->probDistr, XU->stateSpaceSize, &sum),
          printf("X%d %10.6f\n", E->unode, sum));
 
@@ -273,6 +279,20 @@ void OptfactQuery(net)
   GraphMakeClique(net, net->ab, net->abNum);
   CliqueTreeGenerate(net, ALG_OPTFACT);
   if(net->numGroups) SUMFACTORS(net);
+}
+
+void OptfactPlan(net)
+     NETWORK *net;
+{
+  /* mark barren nodes dirty */
+  BNSearch(net, net->ab, net->abNum);
+  GraphNetworkNew(net);
+  GraphMoralize(net);
+  GraphMakeClique(net, net->ab, net->abNum);
+  CliqueTreeGenerate(net, ALG_OPTFACT);
+  /* Display the resulting tree */
+  ClusterGroupsDisplay(net);
+  /* if(net->numGroups) SUMFACTORS(net); */
 }
 
 void OptfactDumpResult(net)

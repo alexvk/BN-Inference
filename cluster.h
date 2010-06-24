@@ -17,15 +17,15 @@ typedef enum {EDGE_NO_MSG, EDGE_MSG_U2D, EDGE_MSG_D2U} STATUS;
 typedef struct {
   int numNodes;
   int *nodes;
-  int *odometer;
-  int stateSpaceSize;
+  long *odometer;
+  long stateSpaceSize;
   int inclNode;
   VECTOR *probDistr;
   int numNghb;
   int *edges;
 
   /* parallel implementation specific */
-  int pars, pare;
+  long pars, pare;
 
 } CLUSTER;
 
@@ -33,17 +33,17 @@ typedef struct {
 typedef struct {
   int numNodes;
   int *nodes;
-  int msgLen;
+  long msgLen;
   int unode;
-  int uindicesLen;
+  long uindicesLen;
   int *uindices;
   int dnode;
-  int dindicesLen;
+  long dindicesLen;
   int *dindices;
   STATUS status;
 
   /* parallel implementation specific */
-  int pars, pare;
+  long pars, pare;
   int numToWait;
   int masterID;
 

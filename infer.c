@@ -29,10 +29,38 @@ int CmdExit(net)
   CompparExit();
 #else
   NetworkFree(net);
-  printf("Total memory used 0x%o bytes (%d Mb)\n",
-         TotalMemGet(), (TotalMemGet() >> 20));
+  printf("Total memory used 0x%lo bytes (%ld Mb, %ld TB)\n",
+         TotalMemGet(), TotalMemGet()/1024L/1024L, TotalMemGet()/1024L/1024L/1024L/1024L);
 #endif /* MULTIPROC */
   return(1);
+}
+
+
+int CmdDumpLabels(net)
+     NETWORK *net;
+{
+  char str[32];
+  int i, k;
+  NODE *node = NULL;
+
+  net->abNum = 0;
+
+  while(1) {
+    printf("Enter node (0 ... %d): ", net->numNodes - 1);
+    gets(str);
+    if (!*str || sscanf(str, "%d", &k) !=  1) break;
+    if (k < 0 || k >= net->numNodes) continue;
+    if ((node = &net->nodes[k]) != NULL) {
+      printf("Node %s [", node->nodeName);
+      for (i = 0; i < node->numValues; i++) {
+        if (i > 0) printf(", ");
+        printf("%s", node->nodeLabels[i]);
+      }
+      printf("]\n");
+    }
+  }
+
+  return (0);
 }
 
 int CmdOptFact(net)
@@ -88,8 +116,14 @@ int CmdOptFact(net)
     TIMER("OptfactQuery", OptfactQuery(net));
     if(!net->numGroups) return (0);
     OptfactDumpResult(net);
-    OptfactTreeFree(net);
+  } else {
+    /* Generate a MapReduce plan */
+    printf("Generating a plan\n");
+    TIMER("OptfactPlan", OptfactPlan(net));
+    if(!net->numGroups) return (0);
   }
+
+  OptfactTreeFree(net);
 
   return (0);
 }
@@ -276,19 +310,20 @@ int CmdHelp(net)
 
 CMD cmdList[] = {
   { "q", "Quit", CmdExit },
-  { "n", "Display network", CmdDisplayNetwork },
-  { "t", "Display join tree", CmdDisplayTree },
-  { "i", "Initialize join tree", CmdInitializeTree },
-  { "e", "Enter evidence", CmdEnterEvidence },
-  { "a", "Display all evidence", CmdDisplayEvidence },
-  { "r", "Reset evidence", CmdResetEvidence },
-  { "u", "Update join tree", CmdTreeUpdate },
-  { "b", "Display beliefs", CmdDisplayBeliefs },
-  { "s", "Evaluate a single node query", CmdNodeQuery },
-  { "o", "Optimal factoring query", CmdOptFact },
-  { "d", "Dump probability distribution", CmdProbDump },
   { "=", "Toggle debugging", CmdToggleDebug },
+  { "a", "Display all evidence", CmdDisplayEvidence },
+  { "b", "Display beliefs", CmdDisplayBeliefs },
+  { "d", "Dump probability distribution", CmdProbDump },
+  { "e", "Enter evidence", CmdEnterEvidence },
   { "h", "Display Help", CmdHelp },
+  { "i", "Initialize join tree", CmdInitializeTree },
+  { "l", "Dump node labels", CmdDumpLabels },
+  { "n", "Display network", CmdDisplayNetwork },
+  { "o", "Optimal factoring query", CmdOptFact },
+  { "r", "Reset evidence", CmdResetEvidence },
+  { "s", "Evaluate a single node query", CmdNodeQuery },
+  { "t", "Display join tree", CmdDisplayTree },
+  { "u", "Update join tree", CmdTreeUpdate },
   { 0 }
 };
 

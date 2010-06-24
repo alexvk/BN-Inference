@@ -15,8 +15,8 @@ static char rcsid[] = "$Id: utils.c,v 1.1 1997/10/15 02:52:53 alexvk Exp alexvk 
 
 int DbgFlag = true;
 
-unsigned int TotalMem = 0;
-unsigned int TotalMemGet() { return TotalMem; }
+unsigned long TotalMem = 0;
+unsigned long TotalMemGet() { return TotalMem; }
 
 void ErrorFatal(const char* name, const char* fmt, ...)
 {
@@ -109,7 +109,7 @@ void VectorNormalize(set, len)
 }
 
 void OdometerInitialize(odometer, nodeSizes, length)
-     int *odometer;
+     long *odometer;
      int *nodeSizes;
      int length;
 {
