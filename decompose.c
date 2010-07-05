@@ -41,7 +41,7 @@ void DecomposeNode(net, node, beg, end)
   bcopy(x0, x1, sizeof(NODE));
 
   /* form the new node name */
-  sprintf(str, "%s-0x%x", x0->nodeName, x0->numParents);
+  sprintf(str, "%s-%#x", x0->nodeName, x0->numParents);
   x1->nodeName = (char*) calloc(strlen(str) + 1, sizeof(char));
   strcpy(x1->nodeName, str);
   x1->numParents = end - beg;

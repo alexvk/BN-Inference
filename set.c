@@ -15,7 +15,7 @@ void SetAddNode (s, node)
      SET *s;
      int node;
 {
-  if(s->numMemb == s->maxMemb)
+  if (s->numMemb == s->maxMemb)
     ErrorFatal("SetAddNode", "Set overflow\n");
   s->set[s->numMemb++] = node;
 }
@@ -25,7 +25,7 @@ void SetDeleteNode (s, node)
      int node;
 {
   int i,j,found = 0;
-  for(i = 0; i < s->numMemb; i++) {
+  for (i = 0; i < s->numMemb; i++) {
     if (s->set[i] == node) {
 	    for (j = i; j < s->numMemb - 1; j++)
         s->set[j] = s->set[j+1];
@@ -56,7 +56,7 @@ void SetMemberPos (x, list, size, pos)
      int size;
      int *pos;
 {
-  int i;
+  register i;
   for (i = 0; i < size; i++)
     if (x == list[i]) {
 	    *pos = i;
@@ -110,9 +110,42 @@ void SetDisplay(list, size)
      int *list;
      int size;
 {
-  int i;
+  register i;
   printf("[ ");
   for (i = 0; i < size; i++)
     printf("%d ", list[i]);
   printf("]");
+}
+
+void SetArrayDisplay(list, size)
+     int *list;
+     int size;
+{
+  register i;
+  printf("{");
+  for (i = 0; i < size; i++)
+    printf("%d,", list[i]);
+  printf("};");
+}
+
+void SetLongDisplay(list, size)
+     long *list;
+     int size;
+{
+  register i;
+  printf("[ ");
+  for (i = 0; i < size; i++)
+    printf("%ld ", list[i]);
+  printf("]");
+}
+
+void SetLongArrayDisplay(list, size)
+     long *list;
+     int size;
+{
+  int i;
+  printf("{");
+  for (i = 0; i < size; i++)
+    printf("%ldL,", list[i]);
+  printf("};");
 }

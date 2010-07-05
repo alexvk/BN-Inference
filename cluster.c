@@ -39,7 +39,7 @@ void ClusterNodeNew(net, XP, nodes, numNodes)
   X->stateSpaceSize = ss;
   bcopy(nodes, X->nodes, numNodes*sizeof(int));
 
-  Dbg2(printf("X %d ", X->stateSpaceSize), SetDump(X->nodes, X->numNodes));
+  Dbg2(printf("X %ld ", X->stateSpaceSize), SetDump(X->nodes, X->numNodes));
   *XP = X;
 }
 
@@ -55,7 +55,7 @@ void ClusterEdgesGenerate(net)
   /* create the graph table in net->ctgt */
   GraphNew(&net->ctgt, net->numCliques);
   GraphTreeTable(net, net->cnodes, net->ctgt, net->numCliques);
-  Dbg2(printf("Join tree table graph:\n"),
+  Dbg2(printf("Junction tree table graph:\n"),
        GraphTableDump(net->ctgt, net->numCliques));
 
   net->cedges = (EDGE **) a_calloc(net->numCliques-1, sizeof(EDGE*));
@@ -98,7 +98,7 @@ void ClusterEdgesGenerate(net)
       E->uindicesLen = XU->stateSpaceSize / E->msgLen;
       E->dindicesLen = XD->stateSpaceSize / E->msgLen;
 
-      Dbg2(printf("E%d (X%d->(%d)->X%d) ",
+      Dbg2(printf("E%d (X%d->(%ld)->X%d) ",
                   i-1, E->unode, E->msgLen, E->dnode),
            SetDump(E->nodes, E->numNodes));
 
@@ -170,7 +170,11 @@ void ClusterGroupNodeDump(net, node)
   SetDisplay(X->nodes, X->numNodes);
   printf(" %ld ", X->stateSpaceSize);
   SetDisplay(X->edges, X->numNghb);
-  printf("\n");
+  if (X->inclNode >= 0) {
+    printf(" { %d } : %d\n", X->inclNode, X->numProbs);
+  } else {
+    printf(" {} : %d \n", X->numProbs);
+  }
 }
 
 void ClusterEdgeDump(net, edge)
@@ -204,6 +208,7 @@ void ClusterGroupEdgeDump(net, edge)
   printf("E%d (X%d->X%d) ", edge, E->unode, E->dnode);
   SetDisplay(E->nodes, E->numNodes);
   printf(" %ld (%ld %ld)", E->msgLen, E->uindicesLen, E->dindicesLen);
+  printf(" : %d", net->groups[E->dnode]->numProbs);
   switch (E->status) {
   case EDGE_NO_MSG:
     printf("\n");
@@ -230,7 +235,7 @@ void ClusterTreeDisplay (net)
 {
   int i;
   if(net->numCliques) {
-    printf("Join tree:\n");
+    printf("Junction tree:\n");
     for(i=0; i<net->numCliques; i++) {
       if(i) ClusterEdgeDump(net, i - 1);
       ClusterNodeDump(net, i);

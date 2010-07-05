@@ -107,7 +107,7 @@ static struct gm_t {
 #ifdef LITE
 static NETWORK *lNet[MAXPROCS];
 /*
-  #define procID	(SYS_THREAD_PTR->user_pid)
+#define procID	(SYS_THREAD_PTR->user_pid)
 */
 #define procID	(procNN - 1 - sc_myid)
 #define gNet	lNet[procID]
@@ -176,7 +176,7 @@ static char *p_malloc(length)
   if(length == 0) return NULL;
   ptr = (char*) G_MALLOC(length)
   if(ptr == NULL) ErrorFatal("p_malloc", "Not enough memory!\n Wanted %u\n",
-                               length);
+                             length);
 
   if(gm != NULL) {
     LOCK(gm->lock)
@@ -235,7 +235,7 @@ void CompparJobInitNodes()
 #endif /* ASSIGN */
 #endif /* MASSIGN */
 
-    PDbg2(printf("P%d X%d (%d to %d from %d) ", procID,
+    PDbg2(printf("P%d X%d (%ld to %ld from %ld) ", procID,
                  node, X->pars, X->pare, X->stateSpaceSize),
           SetDump(gNet->scratchBuffer, numNodes));
 
@@ -297,8 +297,8 @@ void CompparJobInitEdges()
 {
   int i, j, k;
   int ind, sb_shift;
-  int pars, pare, leng;
-  int chunk, size, msgLen;
+  long pars, pare, leng;
+  long chunk, size, msgLen;
   CLUSTER *XU, *XD;
   VECTOR sum;
   EDGE *E;
@@ -340,7 +340,7 @@ void CompparJobInitEdges()
       }
     }
 
-    PDbg(printf("P%d E%d W%d M%d (%d to %d from %d)\n",
+    PDbg(printf("P%d E%d W%d M%d (%ld to %ld from %ld)\n",
                 procID, i-1, E->numToWait, E->masterID,
                 E->pars, E->pare, msgLen));
 
@@ -414,16 +414,17 @@ void CompparJobInitEdges()
 
 void CompparJobIntroduceEvidence()
 {
-  int i, j, k, numEvid;
+  long i;
+  int j, k, numEvid;
   int node = gm->nodeNum;
   CLUSTER *X = gNet->cnodes[node];
   EDGE *E;
 
-  for(i=numEvid=0; i<X->numNodes; i++) {
-    if(GSET(X->nodes[i]) == EMPTY) continue;
-    gNet->scratchBuffer[numEvid++] = X->nodes[i];
+  for(j=numEvid=0; j<X->numNodes; j++) {
+    if(GSET(X->nodes[j]) == EMPTY) continue;
+    gNet->scratchBuffer[numEvid++] = X->nodes[j];
   }
-   
+
   ComputeDecomposeIndex(gNet, X->nodes, X->numNodes, X->pars);
 
   for(i=X->pars; i<X->pare; i++) {
@@ -437,8 +438,8 @@ void CompparJobIntroduceEvidence()
   }
 
   if(procID == 0) {
-    for(i=0; i<X->numNghb; i++) {
-      E = gNet->cedges[X->edges[i]];
+    for(j=0; j<X->numNghb; j++) {
+      E = gNet->cedges[X->edges[j]];
       E->status = (E->dnode == node) ? EDGE_MSG_D2U : EDGE_MSG_U2D;
     }
   }
@@ -499,10 +500,10 @@ void ComputeMultiplyPD2(net, factor, vector, indices, size)
      NETWORK *net;
      VECTOR factor;
      VECTOR *vector;
-     int *indices;
-     int size;
+     long *indices;
+     size_t size;
 {
-  int i;
+  size_t i;
   for(i=0; i<size; i++) {
     vector[indices[i]] *= factor;
   }
@@ -515,7 +516,7 @@ void CompparJobEdgeUpdate()
   int edge = gm->edgeNum;
   EDGE *E = gNet->cedges[edge];
   int numInd0, numInd1;
-  int *indices0, *indices1;
+  long *indices0, *indices1;
   VECTOR sum0, sum1, ratio;
   CLUSTER *X0, *X1;
 
@@ -545,7 +546,7 @@ void CompparJobEdgeUpdate()
   /* debugging
 
      CompparProt();
-     printf("P%d E%d [ %d %d %d %d ] ", procID, edge, E->pars, E->pare,
+     printf("P%d E%d [ %d %d %ld %ld ] ", procID, edge, E->pars, E->pare,
      E->masterID, E->numToWait);
      SetDisplay(E->uindices, E->uindicesLen);
      printf(" ");
@@ -578,9 +579,9 @@ void CompparJobEdgeUpdate()
 
   if(procID == 0) {
     E->status = EDGE_NO_MSG;
-    for(i=0; i<X0->numNghb; i++) {
-      if(X0->edges[i] == edge) continue;
-      E = gNet->cedges[X0->edges[i]];
+    for(j=0; j<X0->numNghb; j++) {
+      if(X0->edges[j] == edge) continue;
+      E = gNet->cedges[X0->edges[j]];
       E->status = E->dnode == node0 ? EDGE_MSG_D2U : EDGE_MSG_U2D;
     }
   }
@@ -590,11 +591,12 @@ void CompparJobEdgeUpdate()
 
 void CompparJobChainUpdate()
 {
-  int i, j, ind;
+  int i, j;
+  long ind;
   int edge, node0, node1;
   int level = gm->parameter;
-  int numInd0, numInd1;
-  int *indices0, *indices1;
+  long numInd0, numInd1;
+  long *indices0, *indices1;
   VECTOR sum0, sum1, ratio;
   CLUSTER *X0, *X1;
   EDGE *E;
@@ -657,7 +659,8 @@ void CompparJobChainUpdate()
 
 void CompparJobComputeBeliefs()
 {
-  int i, pos, state;
+  long i;
+  int pos, state;
   int node = gm->nodeNum;
   CLUSTER *X = gNet->cnodes[node];
   int k = gm->parameter;
@@ -671,12 +674,12 @@ void CompparJobComputeBeliefs()
   }
 
   LOCK(gm->lock)
-    for(i=0; i<x->numValues; i++) {
-      gm->exchange[0]->result[i] += x->beliefs[i];
-    }
+  for(pos=0; pos<x->numValues; pos++) {
+    gm->exchange[0]->result[pos] += x->beliefs[pos];
+  }
   UNLOCK(gm->lock)
 
-    BARRIER(gm->barex, procNN);
+  BARRIER(gm->barex, procNN);
 }
 
 void CompparGenerateEdge(edge)
@@ -708,7 +711,7 @@ void CompparGenerateEdge(edge)
   E->dindicesLen = XD->stateSpaceSize / msgLen;
   E->msgLen = msgLen;
 
-  PDbg2(printf("P%d E%d %d %d %d ", procID, edge, msgLen,
+  PDbg2(printf("P%d E%d %ld %ld %ld ", procID, edge, msgLen,
                E->dindicesLen, E->uindicesLen),
         SetDump(E->nodes, E->numNodes));
 }
@@ -737,9 +740,7 @@ void CompparReadGroup(node)
 void CompparGroupProbDistr(node)
      int node;
 {
-  int i;
-  long chunk;
-  long pars, pare;
+  long i, chunk, pars, pare;
   CLUSTER *X = gNet->groups[node];
 
   X->probDistr = gm->globPD[node];
@@ -777,11 +778,11 @@ void CompparGroupProbDistr(node)
 
 void CompparJobSumFactors()
 {
-  int j, k;
+  long j, k;
   int sb_shift;
   int node, ind;
   long chunk;
-  int uleng, dleng;
+  long uleng, dleng;
   long size, msgLen, pars, pare;
   int numGroups = gm->parameter;
   int level = gm->parameter - 1;
@@ -894,7 +895,7 @@ void CompparJobSumFactors()
     /* save a barrier when the computations are local */
     BARRIER(gm->barex, procNN);
 
-    PDbg(printf("P%d L%d W%d M%d (%d to %d from %d) %d(%d) %d(%d)\n",
+    PDbg(printf("P%d L%d W%d M%d (%ld to %ld from %ld) %ld(%ld) %ld(%ld)\n",
                 procID, level, E->numToWait, E->masterID,
                 E->pars, E->pare, msgLen,
                 E->dindicesLen, dleng, E->uindicesLen, uleng));
@@ -959,7 +960,8 @@ void CompparJobSumFactors()
 
 void CompparJobStorePriors()
 {
-  int i, chunk;
+  int i;
+  long chunk;
   CLUSTER *X;
   VECTOR *P;
 
@@ -978,7 +980,8 @@ void CompparJobStorePriors()
 
 void CompparJobRestoreTree()
 {
-  int i, chunk;
+  int i;
+  long chunk;
   CLUSTER *X;
 
   for(i=gNet->numCliques; i>0; i--) {
@@ -1124,7 +1127,7 @@ void CompparSumJoint(net)
      NETWORK *net;
 {
   int node;
-  int size;
+  long size;
 
   assert(net == gNet);
   gm->DbgFlag = DbgFlag;
@@ -1309,9 +1312,9 @@ static void Slave()
           break;
         default:
           LOCK(gm->lock)
-            printf("Slave %d got illegal job (%d)\n", procID, gm->jobtype);
+          printf("Slave %d got illegal job (%d)\n", procID, gm->jobtype);
           UNLOCK(gm->lock)
-            }
+      }
     }
 
 #ifdef MEASURE
@@ -1444,19 +1447,19 @@ void CompparInit(net, numProcs)
 
   MAIN_INITENV(,AV_MEMORY)
 
-    gm = (struct gm_t*) G_MALLOC(sizeof(struct gm_t))
-    if(!gm) {
-      ErrorFatal("CompparInit", "Could Not Allocate Global Memory\n");
-    }
+  gm = (struct gm_t*) G_MALLOC(sizeof(struct gm_t))
+  if(!gm) {
+    ErrorFatal("CompparInit", "Could Not Allocate Global Memory\n");
+  }
   gm->totalMem = sizeof(struct gm_t);
 
   gm->jobtype = JOB_IDLE;
 
   BARINIT(gm->entry)
-    BARINIT(gm->barex)
-    LOCKINIT(gm->lock)
+  BARINIT(gm->barex)
+  LOCKINIT(gm->lock)
 
-    gNet = net;
+  gNet = net;
   gm->DbgFlag = DbgFlag;
 
   /* this buffers will be used to transfer information to other procs */
@@ -1501,7 +1504,7 @@ void CompparInit(net, numProcs)
   gm->exchange[0] = processorEX;
    
 #ifdef PERF
-  printf("perf_init(0x%x, 0x%x)\n", perf_clus_enbl, ANL_num_clusters);
+  printf("perf_init(%#x, %#x)\n", perf_clus_enbl, ANL_num_clusters);
   perf_init(perf_clus_enbl, ANL_num_clusters);
 #endif /* PERF */
 
@@ -1563,10 +1566,10 @@ void CompparExit()
   p_free((char*) gm->scratchBuffer);
   G_FREE(gm)
 
-  printf("Local memory used 0x%x bytes (%d Mb)\n",
+  printf("Local memory used %#lx bytes (%ld Mb)\n",
            TotalMemGet(), TotalMemGet()/1024L/1024L);
 
-  printf("Global memory used 0x%x bytes (%d Mb)\n",
+  printf("Global memory used %#lx bytes (%ld Mb)\n",
          tm, tm/1024L/1024L);
 
   MAIN_END

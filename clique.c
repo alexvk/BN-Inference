@@ -283,7 +283,7 @@ void CliqueFormClusterTree(net, cc)
 {
   int i, j;
   TMPCLIQUE *C;
-  long size;
+  size_t size;
 
   net->numCliques = cc->cliqueCount;
   Dbg(printf("Number of cliques found %d\n", net->numCliques));
@@ -309,11 +309,12 @@ void CliqueFormClusterTree(net, cc)
   net->totPotentials = 0;
   for(i=0; i<net->numCliques; i++) {
     size = net->cnodes[i]->stateSpaceSize;
-    printf("Clique %d -> %ld\n", i, size);
+    Dbg(printf("Clique %d -> %ld", i, size));
     if(size == 0) {
       net->totPotentials = 0;
       break;
     }
+    Dbg(SetDump(net->cnodes[i]->nodes, net->cnodes[i]->numNodes));
     net->totPotentials += size;
   }
 
@@ -328,16 +329,16 @@ void CliqueFormClusterTree(net, cc)
   }
   */
 
-  long tm = net->totPotentials * sizeof(VECTOR);
+  size_t tm = net->totPotentials * sizeof(VECTOR);
 
-  printf("The network will require 0x%lx bytes (%ld MB, %ld TB)\n",
+  printf("The network will require %#lx bytes (%ld MB, %ld TB)\n",
          tm, tm/1024L/1024L, tm/1024L/1024L/1024L/1024L);
 
   if(net->totPotentials) { /*  && net->totPotentials < AV_MEMORY / sizeof(VECTOR)) { */
     ClusterEdgesGenerate(net);
   } else {
     if(tm) {
-      printf("The network will require 0x%lx bytes (%ld Mb)\n",
+      printf("The network will require %#lx bytes (%ld Mb)\n",
              tm, tm/1024L/1024L);
     } else {
       printf("Counter overflow\n");
@@ -358,9 +359,10 @@ void CliqueFormOptfactTree(net, cc)
      NETWORK *net;
      CLIQUECONTROL *cc;
 {
-  int i, j, k, l;
-  int num, pnt, numEvid, size;
-  long m;
+  int i, j, k, l, m;
+  int num, pnt, numEvid;
+  size_t size;
+  size_t mem = 0;
   CLIQUECONTROL *ncc;
   TMPCLIQUE *C, *C2;
   CLUSTER *X;
@@ -449,7 +451,7 @@ void CliqueFormOptfactTree(net, cc)
 
       }
     }
-     
+
     qsort(ncc->cliqueTree + pnt, num, sizeof(TMPCLIQUE*), CliqueCompare);
      
     /* if the original clique is unassigned and is not an
@@ -481,7 +483,7 @@ void CliqueFormOptfactTree(net, cc)
   /* form the group tree in the net structure */
   SetInit(net->numNodes, &nodes);
   GraphZero(net->graphTable, size);
-  for(i=num=net->numGroups=m=0; i<size; i++) {
+  for(i=num=net->numGroups=0; i<size; i++) {
     C = ncc->cliqueTree[pnt + i];
     /* sort nodes according to predefined order (MC) */
     qsort(C->nodes, C->numNodes, sizeof(int), (CMPFUN) CliqueNodeCompare);
@@ -509,9 +511,10 @@ void CliqueFormOptfactTree(net, cc)
     net->numGroups++;
     /* estimate memory requirements */
     if(X->stateSpaceSize) {
-      if(m < X->stateSpaceSize) m = X->stateSpaceSize;
+      printf("G%d size is %ld\n", i, X->stateSpaceSize);
+      if(mem < X->stateSpaceSize) mem = X->stateSpaceSize;
     } else {
-      m = 0;
+      mem = 0;
       break;
     }
   }
@@ -521,15 +524,15 @@ void CliqueFormOptfactTree(net, cc)
   Dbg2(printf("Group join tree graph:\n"),
        GraphTableDump(net->graphTable, net->numGroups));
 
-  long tm = 2 * sizeof(VECTOR) * m;
+  size_t tm = 2 * sizeof(VECTOR) * mem;
 
-  printf("The network will require 0x%lx bytes (%ld MB, %ld TB)\n",
+  printf("The optfact query will require %#lx bytes (%ld MB, %ld TB)\n",
          tm, tm/1024L/1024L, tm/1024L/1024L/1024L/1024L);
 
-  if(tm && m) { /*&& m < AV_MEMORY) { */
+  if(tm && mem) { /*&& m < AV_MEMORY) { */
     OptfactEdgesGenerate(net);
   } else {
-    printf("The query requires too much memory, tm 0x%lx\n", tm);
+    printf("The query requires too much memory, tm %#lx\n", tm);
     for(i=0; i<size; i++) {
       C = ncc->cliqueTree[pnt + i];
       printf("C%d [%d] ", i, C->node);

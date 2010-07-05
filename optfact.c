@@ -9,6 +9,7 @@ static char rcsid[] = "$Id: optfact.c,v 1.1 1997/10/15 02:52:53 alexvk Exp alexv
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include "network.h"
 #include "clique.h"
 #include "utils.h"
@@ -63,9 +64,11 @@ void OptfactGroupFree(net, node)
 {
   CLUSTER *X = net->groups[node];
   if(X->nodes) free ((char *) X->nodes);
+  if(X->edges) free ((char *) X->edges);
   if(X->odometer) free ((char *) X->odometer);
   if(X->probDistr) free ((char *) X->probDistr);
   free((char *) X);
+  X->numNghb = 0;
   net->groups[node] = NULL;		      
 }
 
@@ -75,6 +78,7 @@ void OptfactEdgeFree(net, edge)
 {
   EDGE *E = net->gedges[edge];
   if(E->nodes) free ((char *) E->nodes);
+  if(E->origProbs) free ((char *) E->origProbs);
   free((char *) E);
   net->gedges[edge] = NULL;		      
 }
@@ -113,11 +117,11 @@ void OptfactEdgesGenerate(net)
      NETWORK *net;
 {
   int i, j, k, l, p;
-  int maxSumLen = 2;
+  long maxSumLen = 2;
   CLUSTER *XD, *XU;
   int numNodes, numEdges;
-  int maxu = 1;
-  int maxd = 1;
+  long maxu = 1;
+  long maxd = 1;
   EDGE *E;
    
   for(i=0; i<net->numGroups; i++) {
@@ -167,7 +171,7 @@ void OptfactEdgesGenerate(net)
         E->uindicesLen = E->dindicesLen = 0;
       }
 
-      Dbg2(printf("E%d (X%d->(%d)->X%d) ",
+      Dbg2(printf("E%d (X%d->(%ld)->X%d) ",
                   i-1, E->unode, E->msgLen, E->dnode),
            SetDump(E->nodes, E->numNodes));
 
@@ -179,8 +183,8 @@ void OptfactEdgesGenerate(net)
     }
   }
   /* allocate space for indices which are computed on the fly */
-  net->uindices = (int *) a_calloc(maxu, sizeof(int));
-  net->dindices = (int *) a_calloc(maxd, sizeof(int));
+  net->uindices = (long*) a_calloc(maxu, sizeof(long));
+  net->dindices = (long*) a_calloc(maxd, sizeof(long));
   net->maxGTIL = maxSumLen;
 }
 
@@ -188,19 +192,19 @@ void OptfactGroupProbDistr(net, node)
      NETWORK *net;
      int node;
 {
-  int i;
+  long s;
   CLUSTER *X = net->groups[node];
   VECTOR sum;
 
   X->probDistr = (VECTOR*) a_calloc((int)X->stateSpaceSize, sizeof(VECTOR));
 
   if(X->inclNode == EMPTY) {
-    for(i=0; i<X->stateSpaceSize; i++) {
-      X->probDistr[i] = 1;
+    for(s=0; s<X->stateSpaceSize; s++) {
+      X->probDistr[s] = 1;
     }
   } else {
-    for(i=0; i<X->stateSpaceSize; i++) {
-      X->probDistr[i] = ComputeCondProb(net, X->inclNode);
+    for(s=0; s<X->stateSpaceSize; s++) {
+      X->probDistr[s] = ComputeCondProb(net, X->inclNode);
       ComputeNextState(net, X->nodes, X->numNodes);
     }
   }
@@ -209,10 +213,59 @@ void OptfactGroupProbDistr(net, node)
        printf("X%d [%d] %10.6f\n", node, X->inclNode, sum));
 }
 
+int OptfactFindIncludedProbs(net, level)
+     NETWORK *net;
+     int level;
+{
+  register i, j;
+  int retVal = 0;
+  EDGE *E = net->gedges[level];
+  CLUSTER *X = net->groups[E->dnode];
+  int *nodes = E->origProbs;
+
+  if(X->inclNode != EMPTY) {
+    nodes[retVal++] = X->inclNode;
+  }
+  for(i=0; i<X->numNghb; i++) {
+    if(X->edges[i] != level) {
+      if(net->gedges[X->edges[i]]->numOrigProbs > 0) {
+        for(j=0; j < net->gedges[X->edges[i]]->numOrigProbs; j++) {
+          nodes[retVal++] = net->gedges[X->edges[i]]->origProbs[j];
+        }
+      }
+    }
+  }
+  return retVal;
+}
+
+void OptfactCountProbs(net)
+     NETWORK *net;
+{
+  int i;
+  int level = net->numGroups - 1;
+  CLUSTER *X;
+  EDGE *E;
+  int numOrigProbs;
+
+  for(i=0; i<net->numGroups; i++) {
+    X = net->groups[i];
+    X->numProbs=(X->inclNode != EMPTY) ? 1 : 0;
+  }
+
+  while(level-->0) {
+    E = net->gedges[level];
+    net->groups[E->unode]->numProbs += net->groups[E->dnode]->numProbs;
+    int expOrigProb = net->groups[E->dnode]->numProbs;
+    E->origProbs = (int *) a_calloc(expOrigProb, sizeof(int));
+    E->numOrigProbs = OptfactFindIncludedProbs(net, level);
+    assert(E->numOrigProbs == expOrigProb);
+  }
+}
+
 void OptfactSumFactors(net)
      NETWORK *net;
 {
-  int i, index;
+  long i, index;
   int level = net->numGroups - 1;
   CLUSTER *XU, *XD;
   VECTOR sum;
@@ -272,7 +325,12 @@ void OptfactSumFactors(net)
 void OptfactQuery(net)
      NETWORK *net;
 {
+  register i;
   /* mark barren nodes dirty */
+  for(i=0; i<net->abNum; i++) {
+    assert(net->ab[i]>0);
+    assert(net->ab[i]<net->numNodes);
+  }
   BNSearch(net, net->ab, net->abNum);
   GraphNetworkNew(net);
   GraphMoralize(net);
@@ -281,27 +339,13 @@ void OptfactQuery(net)
   if(net->numGroups) SUMFACTORS(net);
 }
 
-void OptfactPlan(net)
-     NETWORK *net;
-{
-  /* mark barren nodes dirty */
-  BNSearch(net, net->ab, net->abNum);
-  GraphNetworkNew(net);
-  GraphMoralize(net);
-  GraphMakeClique(net, net->ab, net->abNum);
-  CliqueTreeGenerate(net, ALG_OPTFACT);
-  /* Display the resulting tree */
-  ClusterGroupsDisplay(net);
-  /* if(net->numGroups) SUMFACTORS(net); */
-}
-
 void OptfactDumpResult(net)
      NETWORK *net;
 {
-  int i, j;
-  int index;
-  int *indices;
-  int numA, numB;
+  long i, j;
+  long index;
+  long *indices;
+  size_t numA, numB;
   CLUSTER *X0 = net->groups[0];
   VECTOR sum;
 
@@ -318,7 +362,7 @@ void OptfactDumpResult(net)
       }
     }
 
-    indices = (int *) a_calloc(numA, sizeof(int));
+    indices = (long*) a_calloc(numA, sizeof(long));
     bzero(net->nodeStates, net->numNodes*sizeof(int));
     for(i=0; i<numA; i++) {
       ComputeIndex(net, X0->nodes, X0->numNodes, indices + i);

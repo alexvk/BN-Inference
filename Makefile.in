@@ -73,7 +73,7 @@ clean:
 	-@ rm -f *~ core a.out comppar.c lex.yy.c *.o
 
 superclean: clean
-	-@ rm -f infer *.old
+	-@ rm -f infer makefile* *.a *.old
 
 tar: 
 	-@ mkdir infer

@@ -37,8 +37,8 @@ typedef int (*CMPFUN)(const void*, const void*);
 
 extern int DbgFlag;
 
-extern void* a_calloc(unsigned int n1, unsigned int n2);
+extern void* a_calloc(size_t n1, size_t n2);
 
-extern unsigned long TotalMemGet();
+extern size_t TotalMemGet();
 
 #endif /* UTILS_INCLUDED */

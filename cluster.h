@@ -19,13 +19,18 @@ typedef struct {
   int *nodes;
   long *odometer;
   long stateSpaceSize;
-  int inclNode;
   VECTOR *probDistr;
   int numNghb;
   int *edges;
 
+  /* optfact specific */
+  int inclNode;
+
   /* parallel implementation specific */
   long pars, pare;
+
+  /* MR specific */
+  int numProbs;
 
 } CLUSTER;
 
@@ -36,16 +41,20 @@ typedef struct {
   long msgLen;
   int unode;
   long uindicesLen;
-  int *uindices;
+  long *uindices;
   int dnode;
   long dindicesLen;
-  int *dindices;
+  long *dindices;
   STATUS status;
 
   /* parallel implementation specific */
   long pars, pare;
   int numToWait;
   int masterID;
+
+  /* MR specific */
+  int numOrigProbs;
+  int* origProbs;
 
 } EDGE;
 

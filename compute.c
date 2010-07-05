@@ -27,7 +27,7 @@ void ComputeDecomposeIndex(net, nodes, numNodes, index)
      NETWORK *net;
      int *nodes;
      int numNodes;
-     int index;
+     long index;
 {
   int i, node, state;
 
@@ -35,8 +35,8 @@ void ComputeDecomposeIndex(net, nodes, numNodes, index)
 
   for(i=numNodes; i>0; i--) {
     node = nodes[i - 1];
-    state = index % net->nodeSizes[node];
-    index /= net->nodeSizes[node];
+    state = index % (long) net->nodeSizes[node];
+    index /= (long) net->nodeSizes[node];
     net->nodeStates[node] = state;
   }
 }
@@ -48,14 +48,14 @@ void ComputeIncorporateIndex(net, nodes, numNodes, index)
      NETWORK *net;
      int *nodes;
      int numNodes;
-     int index;
+     long index;
 {
   int i, node, state;
 
   for(i=numNodes; i>0; i--) {
     node = nodes[i - 1];
-    state = index % net->nodeSizes[node];
-    index /= net->nodeSizes[node];
+    state = index % (long) net->nodeSizes[node];
+    index /= (long) net->nodeSizes[node];
     net->nodeStates[node] = state;
   }
 }
@@ -67,9 +67,10 @@ void ComputeIndex(net, nodes, numNodes, index)
      NETWORK *net;
      int *nodes;
      int numNodes;
-     int *index;
+     long *index;
 {
-  int i, result;
+  int i;
+  long result;
 
   for(i=0, result=0; i<numNodes; i++) {
     result *= net->nodeSizes[nodes[i]];
@@ -107,7 +108,8 @@ void ComputeBeliefs(net, node, k)
      NETWORK *net;
      int node, k;
 {
-  int i, pos, state;
+  long s;
+  int pos, state;
   CLUSTER *X = net->cnodes[node];
   NODE *x = net->nodes + k;
 
@@ -115,9 +117,9 @@ void ComputeBeliefs(net, node, k)
 
   bzero(x->beliefs, x->numValues*sizeof(VECTOR));
   SetMemberPos(k, X->nodes, X->numNodes, &pos);
-  for(i=0; i<X->stateSpaceSize; i++) {
-    state = (i / X->odometer[pos]) % x->numValues;
-    x->beliefs[state] += X->probDistr[i];
+  for(s=0; s<X->stateSpaceSize; s++) {
+    state = (s / X->odometer[pos]) % (long) x->numValues;
+    x->beliefs[state] += X->probDistr[s];
   }
 }
 
@@ -128,10 +130,11 @@ void ComputeEdgeIndices(net, X, E, indices, size)
      NETWORK *net;
      CLUSTER *X;
      EDGE *E;
-     int *indices;
-     int size;
+     long *indices;
+     long size;
 {
   int i, j, numFree;
+  long s;
 
   for(i=j=numFree=0; i<X->numNodes; i++) {
     if(j<E->numNodes && X->nodes[i] == E->nodes[j]) {
@@ -142,8 +145,8 @@ void ComputeEdgeIndices(net, X, E, indices, size)
     net->nodeStates[X->nodes[i]] = 0;
   }
 
-  for(i=0; i<size; i++) {
-    ComputeIndex(net, X->nodes, X->numNodes, indices + i);
+  for(s=0; s<size; s++) {
+    ComputeIndex(net, X->nodes, X->numNodes, indices + s);
     ComputeNextState(net, net->scratchBuffer, numFree);
   }
 }
@@ -160,13 +163,13 @@ void ComputePartialSum(net, parsum, vector, indices, size)
      NETWORK *net;
      VECTOR *parsum;
      VECTOR *vector;
-     int *indices;
-     int size;
+     long *indices;
+     long size;
 {
-  int i;
+  long s;
   VECTOR result = 0;
-  for(i=0; i<size; i++) {
-    result += vector[indices[i]];
+  for(s=0; s<size; s++) {
+    result += vector[indices[s]];
   }
   *parsum = result;
 }
@@ -178,12 +181,12 @@ void ComputeMultiplyPD(net, factor, vector, indices, size)
      NETWORK *net;
      VECTOR factor;
      VECTOR *vector;
-     int *indices;
-     int size;
+     long *indices;
+     long size;
 {
-  int i;
-  for(i=0; i<size; i++) {
-    vector[indices[i]] *= factor;
+  long s;
+  for(s=0; s<size; s++) {
+    vector[indices[s]] *= factor;
   }
 }
 
@@ -193,7 +196,8 @@ void ComputeMultiplyPD(net, factor, vector, indices, size)
 void ComputeSumJoint(net)
      NETWORK *net;
 {
-  int i, index;
+  long i;
+  long index;
   int level = net->numCliques - 1;
   CLUSTER *XU, *XD;
   VECTOR sum;
@@ -206,12 +210,12 @@ void ComputeSumJoint(net)
     XD = net->cnodes[E->dnode];
 
     if(E->uindices == NULL) {
-      E->uindices = (int *) a_calloc(E->uindicesLen, sizeof(int));
+      E->uindices = (long *) a_calloc(E->uindicesLen, sizeof(long));
       ComputeEdgeIndices(net, XU, E, E->uindices, E->uindicesLen);
     }
       
     if(E->dindices == NULL) {
-      E->dindices = (int *) a_calloc(E->dindicesLen, sizeof(int));
+      E->dindices = (long *) a_calloc(E->dindicesLen, sizeof(long));
       ComputeEdgeIndices(net, XD, E, E->dindices, E->dindicesLen);
     }
       
@@ -234,18 +238,18 @@ void ComputeNormalizeDistr(net, node)
      NETWORK *net;
      int node;
 {
-  int i;
+  long s;
   VECTOR sum = 0;
   CLUSTER *X = net->cnodes[node];
 
-  for(i=0; i<X->stateSpaceSize; i++) {
-    sum += X->probDistr[i];
+  for(s=0; s<X->stateSpaceSize; s++) {
+    sum += X->probDistr[s];
   }
 
   Dbg(printf("The node X%d normalization is %10.6f\n", node, sum));
 
-  for(i=0; i<X->stateSpaceSize; i++) {
-    X->probDistr[i] /= sum;
+  for(s=0; s<X->stateSpaceSize; s++) {
+    X->probDistr[s] /= sum;
   }
 }
 
@@ -257,10 +261,12 @@ void ComputeUpdateEdge(net, E, direction)
      EDGE *E;
      int direction;
 {
-  int i, index;
+  int i;
+  long s;
+  long index;
   int node0, node1;
   int numInd0, numInd1;
-  int *indices0, *indices1;
+  long *indices0, *indices1;
   VECTOR sum0, sum1, ratio;
   int edge = E->dnode - 1;
   CLUSTER *X0, *X1;
@@ -296,7 +302,7 @@ void ComputeUpdateEdge(net, E, direction)
   X0 = net->cnodes[node0];
   X1 = net->cnodes[node1];
 
-  for(i=0; i<E->msgLen; i++) {
+  for(s=0; s<E->msgLen; s++) {
     ComputeIndex(net, X1->nodes, X1->numNodes, &index);
     ComputePartialSum(net, &sum1, X1->probDistr + index, indices1, numInd1);
     ComputeIndex(net, X0->nodes, X0->numNodes, &index);
@@ -354,13 +360,14 @@ void ComputeIntroduceEvidence(net, node)
      NETWORK *net;
      int node;
 {
-  int i, j, k;
+  long s;
+  int j, k;
   int state, numNodes;
   CLUSTER *X = net->cnodes[node];      
   EDGE *E;
 
-  for(i=numNodes=0; i<X->numNodes; i++) {
-    k = X->nodes[i];
+  for(j=numNodes=0; j<X->numNodes; j++) {
+    k = X->nodes[j];
     net->nodeStates[k] = 0;
     if(net->nodeMarked[k]) {
       net->nodeMarked[k] = 0;
@@ -372,18 +379,18 @@ void ComputeIntroduceEvidence(net, node)
 
   if(numNodes == 0) return;
 
-  for(i=0; i<X->stateSpaceSize; i++) {
+  for(s=0; s<X->stateSpaceSize; s++) {
     for(j=0; j<numNodes; j++) {
       k = net->scratchBuffer[j];
       if(net->nodeStates[k] == net->nodeEvidence[k]) continue;
-      X->probDistr[i] = 0;
+      X->probDistr[s] = 0;
       break;
     }
     ComputeNextState(net, X->nodes, X->numNodes);
   }
 
-  for(i=0; i<X->numNghb; i++) {
-    E = net->cedges[X->edges[i]];
+  for(j=0; j<X->numNghb; j++) {
+    E = net->cedges[X->edges[j]];
     E->status = (E->dnode == node) ? EDGE_MSG_D2U : EDGE_MSG_U2D;
   }
 }
@@ -485,7 +492,8 @@ void ComputeNodeProbDistr(net, node, list, size)
      int *list;
      int size;
 {
-  int i, j;
+  long s;
+  register i;
   CLUSTER *X = net->cnodes[node];
   VECTOR prod;
 
@@ -494,16 +502,16 @@ void ComputeNodeProbDistr(net, node, list, size)
   }
 
   if(size == 0) {
-    for(i=0; i<X->stateSpaceSize; i++) {
-      X->probDistr[i] = 1;
+    for(s=0; s<X->stateSpaceSize; s++) {
+      X->probDistr[s] = 1;
     }
   } else {
     bzero((char *) net->nodeStates, net->numNodes*sizeof(int));
-    for(i=0; i<X->stateSpaceSize; i++) {
-      for(j=0, prod = 1; j<size; j++) {
-        prod *= ComputeCondProb(net, list[j]);
+    for(s=0; s<X->stateSpaceSize; s++) {
+      for(i=0, prod = 1; i<size; i++) {
+        prod *= ComputeCondProb(net, list[i]);
       }
-      X->probDistr[i] = prod;
+      X->probDistr[s] = prod;
       ComputeNextState(net, X->nodes, X->numNodes);
     }
   }
@@ -520,7 +528,7 @@ void ComputeNodeProbDistr(net, node, list, size)
 void ComputeStorePriors(net)
      NETWORK *net;
 {
-  int i;
+  register i;
   CLUSTER *X;
   VECTOR *P;
 
@@ -540,7 +548,7 @@ void ComputeStorePriors(net)
 void ComputeRestoreTree(net)
      NETWORK *net;
 {
-  int i;
+  register i;
   CLUSTER *X;
 
   if(net->priors == NULL) return;

@@ -63,7 +63,7 @@ typedef struct node_t {
   int numProbs;
   VECTOR *probMatrix;		/* used for table representation */
 
-  /* NOISY-OR specific */
+  /* NOISY-OR/MAX specific */
   VECTOR *leak;
   VECTOR ***c;
 
@@ -93,7 +93,7 @@ typedef struct network_t {
 
   /* Cluster tree specific */
   int numCliques;
-  long totPotentials;
+  size_t totPotentials;
   int *cliqueMarked;
   CLUSTER **cnodes;
   VECTOR **priors;		/* prior PD's */
@@ -107,11 +107,11 @@ typedef struct network_t {
   int numGroups;
   CLUSTER **groups;
   EDGE **gedges;
-  int *uindices;
-  int *dindices;
+  long *uindices;
+  long *dindices;
 
   /* parallel specific */
-  int maxCTIL, maxGTIL;
+  long maxCTIL, maxGTIL;
 
 } NETWORK;
 

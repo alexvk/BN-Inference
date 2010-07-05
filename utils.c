@@ -15,8 +15,8 @@ static char rcsid[] = "$Id: utils.c,v 1.1 1997/10/15 02:52:53 alexvk Exp alexvk 
 
 int DbgFlag = true;
 
-unsigned long TotalMem = 0;
-unsigned long TotalMemGet() { return TotalMem; }
+size_t TotalMem = 0;
+size_t TotalMemGet() { return TotalMem; }
 
 void ErrorFatal(const char* name, const char* fmt, ...)
 {
@@ -41,14 +41,14 @@ void ErrorSumOne(str, sum)
 }
 
 void *a_calloc(n, size)
-     unsigned int n;
-     unsigned int size;
+     size_t n;
+     size_t size;
 {
   void *temp = calloc(n,size);
 
   if (temp == NULL && n != 0) {
     ErrorFatal("a_calloc",
-               "Not enough memory (wanted %u x %u).\n", n, size);
+               "Not enough memory (wanted %ld x %ld).\n", n, size);
   }
   TotalMem += (n * size);
   return temp;
@@ -75,7 +75,7 @@ void SetDump(set, len)
 
 void VectorDump(set, len)
      VECTOR *set;
-     int len;
+     size_t len;
 {
   int i;
   printf("[ ");
@@ -86,10 +86,10 @@ void VectorDump(set, len)
 
 void VectorSum(set, len, result)
      VECTOR *set;
-     int len;
+     size_t len;
      VECTOR *result;
 {
-  int i;
+  size_t i;
   VECTOR sum = 0;
   for(i = 0; i < len; i++) {
     sum += set[i];
@@ -100,7 +100,7 @@ void VectorSum(set, len, result)
 
 void VectorNormalize(set, len)
      VECTOR *set;
-     int len;
+     size_t len;
 {
   int i;
   VECTOR sum = 0;

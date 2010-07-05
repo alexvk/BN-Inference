@@ -29,7 +29,7 @@ int CmdExit(net)
   CompparExit();
 #else
   NetworkFree(net);
-  printf("Total memory used 0x%lo bytes (%ld Mb, %ld TB)\n",
+  printf("Total memory used %#lx bytes (%ld Mb, %ld TB)\n",
          TotalMemGet(), TotalMemGet()/1024L/1024L, TotalMemGet()/1024L/1024L/1024L/1024L);
 #endif /* MULTIPROC */
   return(1);
@@ -74,33 +74,35 @@ int CmdOptFact(net)
   while(1) {
     printf("Enter query node (0 ... %d): ", net->numNodes - 1);
     gets(str);
-    if (!*str || sscanf(str, "%d", &node) !=  1) break;
-    if (node < 0 || node >= net->numNodes) continue;
+    if(!*str || sscanf(str, "%d", &node) !=  1) break;
+    if(node < 0 || node >= net->numNodes) continue;
     if(SetMember(node, net->ab, net->abNum)) continue;
     if(net->nodeEvidence[node] != NOTSET) continue;
     net->ab[net->abNum++] = node;
   }
 
   /*
-    printf("Query nodes ");
-    SetDump(net->ab, net->abNum);
+  printf("Query nodes ");
+  SetDump(net->ab, net->abNum);
   */
+
   net->aNum = net->abNum;
 
   while(1) {
     printf("Enter conditioning node (0 ... %d): ", net->numNodes - 1);
     gets(str);
-    if (!*str || sscanf(str, "%d", &node) !=  1) break;
-    if (node < 0 || node >= net->numNodes) continue;
+    if(!*str || sscanf(str, "%d", &node) !=  1) break;
+    if(node < 0 || node >= net->numNodes) continue;
     if(SetMember(node, net->ab, net->abNum)) continue;
     if(net->nodeEvidence[node] != NOTSET) continue;
     net->ab[net->abNum++] = node;
   }
 
   /*
-    printf("Conditioning nodes ");
-    SetDump(net->ab + net->aNum, net->abNum - net->aNum);
+  printf("Conditioning nodes ");
+  SetDump(net->ab + net->aNum, net->abNum - net->aNum);
   */
+
   if(net->abNum == 0) return(0);
 
   if(net->aNum == 0) net->aNum = net->abNum;
@@ -116,11 +118,6 @@ int CmdOptFact(net)
     TIMER("OptfactQuery", OptfactQuery(net));
     if(!net->numGroups) return (0);
     OptfactDumpResult(net);
-  } else {
-    /* Generate a MapReduce plan */
-    printf("Generating a plan\n");
-    TIMER("OptfactPlan", OptfactPlan(net));
-    if(!net->numGroups) return (0);
   }
 
   OptfactTreeFree(net);
@@ -279,7 +276,7 @@ int CmdInitializeTree(net)
       printf("This will take a while ...\n");
       TIMER("ClusterTreeInit", ClusterTreeInit(net));
       TIMER("StorePriors", STOREPRIORS(net));
-      Dbg(printf("Local memory used: 0x%x bytes\n", TotalMemGet()));
+      Dbg(printf("Local memory used: %#lx bytes\n", TotalMemGet()));
     } else {
       printf("No join tree in memory ...\n");
     }	
@@ -349,15 +346,15 @@ void AppRunCmd(net)
     printf("infer > ");
     gets(cmdLine);
     if (*cmdLine) {
-	    q = strtok(cmdLine, " \t\n");
-	    for (item = cmdList; item->cmdstr; item++) {
+      q = strtok(cmdLine, " \t\n");
+      for (item = cmdList; item->cmdstr; item++) {
         if (!strcasecmp(q, item->cmdstr)) {
           if ((item->funcptr)(net))
             return;
           break;
         }
-	    }
-	    if (!item->cmdstr)
+      }
+      if (!item->cmdstr)
         printf("Unrecognized command: %s\n", q);
     }
   }
@@ -395,7 +392,7 @@ int main(argc, argv)
   NetworkFileReadErgo(net, net->netName);
   NetworkAnalyze(net);
   TIMER("ClusterTreeGenerate", ClusterTreeGenerate(net));
-  Dbg(printf("Local memory used: 0x%x bytes\n", TotalMemGet()));
+  Dbg(printf("Local memory used: %#lx bytes\n", TotalMemGet()));
 
 #ifdef MULTIPROC
   CompparInit(net, (int) atoi(argv[2]));
